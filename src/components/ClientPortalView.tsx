@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Hls from 'hls.js';
-import { Channel, UserAccount } from '../types';
+import { Channel, UserAccount, ClientBranding } from '../types';
 import { VodItem, FEATURED_MOVIES, SAMPLE_MOVIES, SAMPLE_SERIES } from '../data/vodData';
+import { FavoritesBackupModal } from './FavoritesBackupModal';
+import { exportFavoritesBackup } from '../utils/favoritesBackup';
+import { 
+  applyDynamicBranding, 
+  getBackgroundClassesAndStyles, 
+  hexWithAlpha 
+} from '../utils/dynamicBranding';
 import {
   Film, Tv, PlaySquare, Settings, Search, Menu, ChevronRight, ChevronLeft,
   Star, Play, Pause, Volume2, VolumeX, Maximize2, Minimize2, X,
   Bookmark, Clock, Sparkles, Check, ShieldCheck, Calendar, LogOut,
   ExternalLink, Crown, AlertCircle, Code2, Folder, Loader2,
-  Sun, PictureInPicture2, Gauge, RefreshCw, SkipBack, Plus
+  Sun, PictureInPicture2, Gauge, RefreshCw, SkipBack, Plus,
+  Download, Upload, FileJson, CheckCircle2
 } from 'lucide-react';
 
 interface ClientPortalViewProps {
@@ -18,6 +26,12 @@ interface ClientPortalViewProps {
   onLogout: () => void;
   onOpenImporter?: () => void;
   onToggleFavorite: (channelId: string) => void;
+  onImportFavorites?: (
+    favoriteIds: string[],
+    importedChannels: any[],
+    mode: 'merge' | 'replace'
+  ) => { count: number; matched: number };
+  onFavoritesImported?: (updatedChannels: Channel[], count: number) => void;
   onSwitchToAdmin?: () => void;
   isAdminPreview?: boolean;
 }
@@ -26,13 +40,6 @@ interface ClientTabConfig {
   id: 'movies' | 'series' | 'live' | 'settings';
   label: string;
   visible: boolean;
-}
-
-interface ClientBranding {
-  appName: string;
-  accentColor: string;
-  logoUrl: string;
-  footerText: string;
 }
 
 const DEFAULT_CLIENT_TABS: ClientTabConfig[] = [
@@ -47,6 +54,8 @@ const DEFAULT_BRANDING: ClientBranding = {
   accentColor: '#dc2626',
   logoUrl: '',
   footerText: 'Transmissão HD • Canais ao Vivo • Player Rápido',
+  backgroundStyle: 'default',
+  faviconSync: true,
 };
 
 type ClientTab = 'movies' | 'series' | 'live' | 'settings';
@@ -86,12 +95,6 @@ function buildProxyUrl(url: string): string {
   return `/api/proxy-stream?url=${encodeURIComponent(url)}`;
 }
 
-function hexWithAlpha(hex: string, alpha: number): string {
-  const clean = hex.replace('#', '');
-  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0');
-  return `#${clean}${a}`;
-}
-
 export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   channels,
   categories,
@@ -99,6 +102,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   onLogout,
   onOpenImporter,
   onToggleFavorite,
+  onImportFavorites,
+  onFavoritesImported,
   onSwitchToAdmin,
   isAdminPreview = false,
 }) => {
@@ -107,6 +112,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [activeSlide, setActiveSlide] = useState<number>(0);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [isFavoritesModalOpen, setIsFavoritesModalOpen] = useState<boolean>(false);
+  const [backupToast, setBackupToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [clientTabs, setClientTabs] = useState<ClientTabConfig[]>(DEFAULT_CLIENT_TABS);
   const [branding, setBranding] = useState<ClientBranding>(DEFAULT_BRANDING);
@@ -126,7 +133,9 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
             setClientTabs(data.clientTabs);
           }
           if (data.branding) {
-            setBranding({ ...DEFAULT_BRANDING, ...data.branding });
+            const loaded: ClientBranding = { ...DEFAULT_BRANDING, ...data.branding };
+            setBranding(loaded);
+            applyDynamicBranding(loaded);
           }
         }
       })
@@ -919,13 +928,20 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
     return null;
   };
 
+  const bgConfig = getBackgroundClassesAndStyles(branding.backgroundStyle, accent);
+
   return (
-    <div className="min-h-screen bg-[#08080c] text-slate-100 flex flex-col font-sans select-none relative overflow-x-hidden">
-      <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[700px] h-[500px] rounded-full blur-[140px]" style={{ background: hexWithAlpha(accent, 0.15) }} />
-        <div className="absolute bottom-0 right-0 w-[500px] h-[400px] rounded-full blur-[160px]" style={{ background: hexWithAlpha(accent, 0.08) }} />
-        <div className="absolute inset-0 bg-[radial-gradient(#1e2433_1px,transparent_1px)] [background-size:24px_24px] opacity-25" />
-      </div>
+    <div
+      className={`min-h-screen text-slate-100 flex flex-col font-sans select-none relative overflow-x-hidden ${bgConfig.className}`}
+      style={bgConfig.style}
+    >
+      {branding.backgroundStyle !== 'oled' && (
+        <div className="fixed inset-0 pointer-events-none z-0">
+          <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[700px] h-[500px] rounded-full blur-[140px]" style={{ background: hexWithAlpha(accent, 0.15) }} />
+          <div className="absolute bottom-0 right-0 w-[500px] h-[400px] rounded-full blur-[160px]" style={{ background: hexWithAlpha(accent, 0.08) }} />
+          <div className="absolute inset-0 bg-[radial-gradient(#1e2433_1px,transparent_1px)] [background-size:24px_24px] opacity-25" />
+        </div>
+      )}
 
       {isAdminPreview && (
         <div className="relative z-50 text-white px-4 py-2 text-xs flex items-center justify-between shadow-md" style={{ background: `linear-gradient(90deg, ${accent}, ${hexWithAlpha(accent, 0.8)})` }}>
@@ -1458,16 +1474,77 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                   <button onClick={() => setActiveCategory(null)} className="font-semibold cursor-pointer" style={{ color: accent }}>Ver todas as pastas</button>
                 </div>
 
+                {activeCategory === 'Favoritos' && (
+                  <div className="p-3 bg-amber-950/30 border border-amber-500/30 rounded-xl flex flex-wrap items-center justify-between gap-2.5 text-xs shadow-sm">
+                    <div className="flex items-center gap-2 text-amber-200">
+                      <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                      <span><strong>{favoriteChannels.length}</strong> canal(is) favorito(s) salvos</span>
+                    </div>
+                    <div className="flex items-center gap-2 ml-auto">
+                      <button
+                        onClick={() => {
+                          const res = exportFavoritesBackup(channels, currentUser);
+                          if (res.success) {
+                            setBackupToast({
+                              type: 'success',
+                              message: `Arquivo "${res.filename}" baixado com ${res.count} favorito(s)!`,
+                            });
+                            setTimeout(() => setBackupToast(null), 4000);
+                          }
+                        }}
+                        disabled={favoriteChannels.length === 0}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm ${
+                          favoriteChannels.length === 0
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95'
+                        }`}
+                        title="Exportar arquivo JSON com os canais favoritos"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Exportar (.JSON)</span>
+                      </button>
+                      <button
+                        onClick={() => setIsFavoritesModalOpen(true)}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition border border-slate-700 cursor-pointer active:scale-95 shadow-sm"
+                        title="Importar lista de favoritos de um arquivo JSON salvo anteriormente"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Importar (.JSON)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {loadingStreams ? (
                   <div className="py-16 text-center bg-[#0e111a] rounded-2xl border border-slate-800 shadow-lg">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3" style={{ color: accent }} />
                     <p className="text-sm text-slate-200 font-bold">Carregando canais...</p>
                   </div>
                 ) : channelsForSelectedCategory.length === 0 ? (
-                  <div className="text-center py-12 bg-[#0e111a] rounded-2xl border border-slate-800">
-                    <Tv className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                    <p className="text-sm text-slate-400 font-medium">Nenhum canal encontrado.</p>
-                  </div>
+                  activeCategory === 'Favoritos' ? (
+                    <div className="text-center py-12 px-4 bg-[#0e111a] rounded-2xl border border-slate-800 space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                        <Star className="w-6 h-6 fill-amber-400/20" />
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-200">Nenhum canal favoritado ainda</h4>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                        Você pode marcar qualquer canal com a estrela ou restaurar seus favoritos trazendo um arquivo <code className="text-amber-300 font-mono">.json</code> salvo de outro navegador.
+                      </p>
+                      <button
+                        onClick={() => setIsFavoritesModalOpen(true)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white transition shadow-md cursor-pointer hover:opacity-95 active:scale-98"
+                        style={{ background: accent }}
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span>Importar Backup de Favoritos (JSON)</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 bg-[#0e111a] rounded-2xl border border-slate-800">
+                      <Tv className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                      <p className="text-sm text-slate-400 font-medium">Nenhum canal encontrado.</p>
+                    </div>
+                  )
                 ) : (
                   <div className="bg-[#0c0f17] rounded-2xl border border-slate-800 overflow-hidden divide-y divide-slate-800/60 shadow-lg">
                     {visibleChannels.map((channel) => (
@@ -1571,6 +1648,70 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                     Carregar Nova Lista M3U
                   </button>
                 )}
+              </div>
+
+              {/* Backup & Restauração de Favoritos (JSON) */}
+              <div className="bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bookmark className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <span className="text-xs font-bold text-white">Backup de Favoritos</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                    {favoriteChannels.length} canal(is) salvo(s)
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Exporte sua lista personalizada de canais favoritos em formato <code className="text-amber-300 font-mono">.json</code> para guardar no seu dispositivo ou importar caso troque de navegador ou limpe os dados.
+                </p>
+
+                {backupToast && (
+                  <div className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${backupToast.type === 'success' ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/30' : 'bg-rose-950/40 text-rose-300 border border-rose-500/30'}`}>
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{backupToast.message}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    id="client-settings-export-fav-btn"
+                    onClick={() => {
+                      const res = exportFavoritesBackup(channels, currentUser);
+                      if (res.success) {
+                        setBackupToast({
+                          type: 'success',
+                          message: `Download concluído: "${res.filename}" com ${res.count} favorito(s).`,
+                        });
+                        setTimeout(() => setBackupToast(null), 4000);
+                      } else {
+                        setBackupToast({
+                          type: 'error',
+                          message: res.error || 'Não há favoritos para exportar.',
+                        });
+                        setTimeout(() => setBackupToast(null), 4000);
+                      }
+                    }}
+                    disabled={favoriteChannels.length === 0}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm ${
+                      favoriteChannels.length === 0
+                        ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-98'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Exportar Favoritos (.JSON)</span>
+                  </button>
+
+                  <button
+                    id="client-settings-import-fav-btn"
+                    onClick={() => setIsFavoritesModalOpen(true)}
+                    className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-98 shadow-sm"
+                  >
+                    <Upload className="w-4 h-4 text-blue-400" />
+                    <span>Importar Favoritos (.JSON)</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1791,6 +1932,29 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Modal de Backup e Importação de Favoritos JSON */}
+      <FavoritesBackupModal
+        isOpen={isFavoritesModalOpen}
+        onClose={() => setIsFavoritesModalOpen(false)}
+        channels={channels}
+        currentUser={currentUser}
+        accentColor={accent}
+        onImportSuccess={(favoriteIds, importedChannels, mode) => {
+          let result = { count: favoriteIds.length, matched: 0 };
+          if (onImportFavorites) {
+            result = onImportFavorites(favoriteIds, importedChannels, mode);
+          } else if (onFavoritesImported) {
+            onFavoritesImported(channels, favoriteIds.length);
+          }
+          setBackupToast({
+            type: 'success',
+            message: `${result.matched} canal(is) da sua lista foram marcados como favoritos! (Total de ${result.count} salvos)`,
+          });
+          setTimeout(() => setBackupToast(null), 5000);
+          return result;
+        }}
+      />
     </div>
   );
 };

@@ -29,9 +29,14 @@ import {
   PictureInPicture2,
   Gauge,
   SkipBack,
-  RefreshCw
+  RefreshCw,
+  Upload,
+  Bookmark,
+  FileJson
 } from 'lucide-react';
 import { TvRemoteOverlay } from './TvRemoteOverlay';
+import { FavoritesBackupModal } from './FavoritesBackupModal';
+import { exportFavoritesBackup } from '../utils/favoritesBackup';
 
 interface IptvPlayerViewProps {
   channels: Channel[];
@@ -40,6 +45,12 @@ interface IptvPlayerViewProps {
   onSelectCategory: (category: string) => void;
   onOpenImporter: () => void;
   onToggleFavorite: (channelId: string) => void;
+  onImportFavorites?: (
+    favoriteIds: string[],
+    importedChannels: any[],
+    mode: 'merge' | 'replace'
+  ) => { count: number; matched: number };
+  onFavoritesImported?: (updatedChannels: Channel[], count: number) => void;
   currentUser?: UserAccount | null;
   onOpenAdminPanel?: () => void;
 }
@@ -58,11 +69,14 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
   onSelectCategory,
   onOpenImporter,
   onToggleFavorite,
+  onImportFavorites,
+  onFavoritesImported,
   currentUser,
   onOpenAdminPanel,
 }) => {
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [lastChannel, setLastChannel] = useState<Channel | null>(null);
+  const [isFavoritesModalOpen, setIsFavoritesModalOpen] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(1);
@@ -493,59 +507,20 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
   const favoriteChannels = channels.filter((c) => c.isFavorite);
 
   const handleExportFavorites = () => {
-    if (favoriteChannels.length === 0) {
+    const res = exportFavoritesBackup(channels, currentUser);
+    if (res.success) {
+      setExportNotification({
+        type: 'success',
+        message: `${res.count} canal(is) favorito(s) exportado(s) com sucesso no arquivo "${res.filename}"!`,
+      });
+      setTimeout(() => setExportNotification(null), 5000);
+    } else {
       setExportNotification({
         type: 'info',
-        message: 'Você ainda não possui canais favoritados. Clique na estrela (⭐) de qualquer canal para favoritá-lo e exportar!',
+        message: res.error || 'Você ainda não possui canais favoritados para exportar.',
       });
       setTimeout(() => setExportNotification(null), 4500);
-      return;
     }
-
-    const payload = {
-      appName: 'RPR TV FREE',
-      version: '1.0',
-      exportType: 'iptv_favorites_backup',
-      exportedAt: new Date().toISOString(),
-      user: currentUser
-        ? {
-            id: currentUser.id,
-            username: currentUser.username,
-            name: currentUser.name,
-          }
-        : { username: 'usuario_local' },
-      totalFavorites: favoriteChannels.length,
-      channels: favoriteChannels.map((c) => ({
-        id: c.id,
-        name: c.name,
-        streamUrl: c.streamUrl,
-        logoUrl: c.logoUrl || '',
-        groupTitle: c.groupTitle || 'Favoritos',
-        tvgId: c.tvgId || '',
-        tvgName: c.tvgName || '',
-        userAgent: c.userAgent || '',
-        isFavorite: true,
-      })),
-    };
-
-    const jsonString = JSON.stringify(payload, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const safeUser = currentUser?.username ? currentUser.username.replace(/[^a-zA-Z0-9_-]/g, '') : 'usuario';
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.href = url;
-    link.download = `favoritos_iptv_${safeUser}_${dateStr}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    setExportNotification({
-      type: 'success',
-      message: `${favoriteChannels.length} canal(is) favorito(s) exportado(s) com sucesso em formato JSON!`,
-    });
-    setTimeout(() => setExportNotification(null), 5000);
   };
 
   const currentQualityLabel = (() => {
@@ -632,10 +607,22 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
           >
             <Download className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden sm:inline font-semibold">Exportar Favoritos</span>
-            <span className="sm:hidden font-semibold">Favoritos</span>
+            <span className="sm:hidden font-semibold">Exportar</span>
             <span className="px-1.5 py-0.2 rounded-full bg-amber-500/25 text-[10px] font-mono font-bold text-amber-300 border border-amber-500/30">
               {favoriteChannels.length}
             </span>
+          </button>
+
+          {/* Importar Favoritos JSON */}
+          <button
+            id="import-favorites-btn"
+            onClick={() => setIsFavoritesModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-sm transition active:scale-95 cursor-pointer"
+            title="Importar e restaurar canais favoritos a partir de um arquivo JSON"
+          >
+            <Upload className="w-3.5 h-3.5 text-blue-400" />
+            <span className="hidden sm:inline font-semibold">Importar Favoritos</span>
+            <span className="sm:hidden font-semibold">Importar</span>
           </button>
 
           {/* Importar M3U */}
@@ -1140,15 +1127,26 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
                   {favoriteChannels.length} canal(is) favorito(s)
                 </span>
               </div>
-              <button
-                id="export-favorites-banner-btn"
-                onClick={handleExportFavorites}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 transition shadow-sm active:scale-95 cursor-pointer"
-                title="Baixar arquivo JSON com os canais favoritos"
-              >
-                <Download className="w-3 h-3 text-slate-950" />
-                <span>Exportar JSON</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  id="export-favorites-banner-btn"
+                  onClick={handleExportFavorites}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 transition shadow-sm active:scale-95 cursor-pointer"
+                  title="Baixar arquivo JSON com os canais favoritos"
+                >
+                  <Download className="w-3 h-3 text-slate-950" />
+                  <span>Exportar JSON</span>
+                </button>
+                <button
+                  id="import-favorites-banner-btn"
+                  onClick={() => setIsFavoritesModalOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition shadow-sm active:scale-95 cursor-pointer"
+                  title="Importar e restaurar canais favoritos a partir de arquivo JSON"
+                >
+                  <Upload className="w-3 h-3 text-blue-400" />
+                  <span>Importar JSON</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -1211,14 +1209,24 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
                       </div>
                       <p className="text-sm font-bold text-slate-200">Nenhum canal favorito ainda</p>
                       <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-                        Clique na estrela (⭐) no canal para adicioná-lo aos seus favoritos. Você poderá exportar seu backup em JSON quando quiser!
+                        Clique na estrela (⭐) no canal para adicioná-lo aos favoritos ou restaure um backup JSON salvo de outro navegador ou aparelho.
                       </p>
-                      <button
-                        onClick={() => onSelectCategory('TODOS')}
-                        className="inline-flex items-center gap-1.5 mt-2 px-3.5 py-1.5 text-xs rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition cursor-pointer shadow-md shadow-blue-600/20"
-                      >
-                        <span>Explorar Canais</span>
-                      </button>
+                      <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                        <button
+                          id="empty-state-import-fav-btn"
+                          onClick={() => setIsFavoritesModalOpen(true)}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition cursor-pointer shadow-md"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Importar Favoritos (.JSON)</span>
+                        </button>
+                        <button
+                          onClick={() => onSelectCategory('TODOS')}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition cursor-pointer border border-slate-700"
+                        >
+                          <span>Explorar Todos</span>
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -1389,6 +1397,28 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
         )}
       </AnimatePresence>
 
+      {/* Modal de Backup e Importação de Favoritos JSON */}
+      <FavoritesBackupModal
+        isOpen={isFavoritesModalOpen}
+        onClose={() => setIsFavoritesModalOpen(false)}
+        channels={channels}
+        currentUser={currentUser}
+        accentColor="#2563eb"
+        onImportSuccess={(favoriteIds, importedChannels, mode) => {
+          let result = { count: favoriteIds.length, matched: 0 };
+          if (onImportFavorites) {
+            result = onImportFavorites(favoriteIds, importedChannels, mode);
+          } else if (onFavoritesImported) {
+            onFavoritesImported(channels, favoriteIds.length);
+          }
+          setExportNotification({
+            type: 'success',
+            message: `${result.matched} canal(is) da grade foram marcados como favoritos! (Total de ${result.count} salvos)`,
+          });
+          return result;
+        }}
+      />
+
       <TvRemoteOverlay
         isOpen={isRemoteOpen}
         onClose={() => setIsRemoteOpen(false)}
@@ -1404,6 +1434,24 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
         onNextChannel={handleNextChannel}
         onPrevChannel={handlePrevChannel}
         onToggleAspectRatio={cycleAspectRatio}
+      />
+
+      <FavoritesBackupModal
+        isOpen={isFavoritesModalOpen}
+        onClose={() => setIsFavoritesModalOpen(false)}
+        channels={channels}
+        currentUser={currentUser}
+        accentColor="#2563eb"
+        onFavoritesImported={(updatedChannels, count) => {
+          if (onFavoritesImported) {
+            onFavoritesImported(updatedChannels, count);
+          }
+          setExportNotification({
+            type: 'success',
+            message: `${count} canal(is) favorito(s) importado(s) e sincronizados com sucesso!`,
+          });
+          setTimeout(() => setExportNotification(null), 5000);
+        }}
       />
     </div>
   );

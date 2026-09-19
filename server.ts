@@ -110,11 +110,15 @@ interface ClientTabConfig {
   visible: boolean;
 }
 
+export type BackgroundStyle = 'default' | 'oled' | 'gradient' | 'mesh';
+
 interface ClientBranding {
   appName: string;
   accentColor: string;
   logoUrl: string;
   footerText: string;
+  backgroundStyle?: BackgroundStyle;
+  faviconSync?: boolean;
 }
 
 interface SystemSettings {
@@ -137,6 +141,8 @@ const DEFAULT_BRANDING: ClientBranding = {
   accentColor: '#dc2626',
   logoUrl: '',
   footerText: 'Transmissão HD • Canais ao Vivo • Player Rápido',
+  backgroundStyle: 'default',
+  faviconSync: true,
 };
 
 const HOME_DIR = process.env.HOME || "/data/data/com.termux/files/home";
@@ -239,6 +245,7 @@ function resetLoginAttempts(ip: string) {
 // Settings
 // ----------------------------------------------------
 function sanitizeBranding(input: any, current: ClientBranding): ClientBranding {
+  const allowedBg: BackgroundStyle[] = ['default', 'oled', 'gradient', 'mesh'];
   return {
     appName: typeof input.appName === 'string' && input.appName.trim()
       ? input.appName.trim().slice(0, 30)
@@ -252,6 +259,10 @@ function sanitizeBranding(input: any, current: ClientBranding): ClientBranding {
     footerText: typeof input.footerText === 'string'
       ? input.footerText.trim().slice(0, 80)
       : current.footerText,
+    backgroundStyle: allowedBg.includes(input.backgroundStyle)
+      ? input.backgroundStyle
+      : (current.backgroundStyle || 'default'),
+    faviconSync: typeof input.faviconSync === 'boolean' ? input.faviconSync : (current.faviconSync ?? true),
   };
 }
 

@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { UserAccount, AuthResponse } from '../types';
+import { UserAccount, AuthResponse, ClientBranding } from '../types';
 import { 
   Tv, Lock, User, Eye, EyeOff, LogIn, AlertCircle, CheckCircle,
   ShieldCheck, BadgeCheck
 } from 'lucide-react';
+import { 
+  applyDynamicBranding, 
+  getBackgroundClassesAndStyles, 
+  hexWithAlpha 
+} from '../utils/dynamicBranding';
 
 interface AuthScreenProps {
   onAuthSuccess: (user: UserAccount, token: string) => void;
-}
-
-interface ClientBranding {
-  appName: string;
-  accentColor: string;
-  logoUrl: string;
-  footerText: string;
 }
 
 const DEFAULT_BRANDING: ClientBranding = {
@@ -21,13 +19,9 @@ const DEFAULT_BRANDING: ClientBranding = {
   accentColor: '#dc2626',
   logoUrl: '',
   footerText: 'Transmissão HD • Canais ao Vivo • Player Rápido',
+  backgroundStyle: 'default',
+  faviconSync: true,
 };
-
-function hexWithAlpha(hex: string, alpha: number): string {
-  const clean = hex.replace('#', '');
-  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0');
-  return `#${clean}${a}`;
-}
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   const [loginUsername, setLoginUsername] = useState<string>('');
@@ -49,7 +43,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
       .then(res => res.json())
       .then(data => {
         if (data.success && data.branding) {
-          setBranding({ ...DEFAULT_BRANDING, ...data.branding });
+          const loaded: ClientBranding = { ...DEFAULT_BRANDING, ...data.branding };
+          setBranding(loaded);
+          applyDynamicBranding(loaded);
         }
       })
       .catch(() => {});
@@ -122,11 +118,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     }
   };
 
+  const bgConfig = getBackgroundClassesAndStyles(branding.backgroundStyle, accent);
+
   return (
-    <div className="min-h-screen w-full bg-[#08080c] text-slate-100 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
-      <div className="absolute -top-40 -left-40 w-[520px] h-[520px] rounded-full blur-[140px] pointer-events-none" style={{ background: hexWithAlpha(accent, 0.2) }} />
-      <div className="absolute -bottom-40 -right-40 w-[520px] h-[520px] rounded-full blur-[160px] pointer-events-none" style={{ background: hexWithAlpha(accent, 0.12) }} />
-      <div className="absolute inset-0 bg-[radial-gradient(#1e1e28_1px,transparent_1px)] [background-size:26px_26px] opacity-30 pointer-events-none" />
+    <div
+      className={`min-h-screen w-full text-slate-100 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden ${bgConfig.className}`}
+      style={bgConfig.style}
+    >
+      {branding.backgroundStyle !== 'oled' && (
+        <>
+          <div className="absolute -top-40 -left-40 w-[520px] h-[520px] rounded-full blur-[140px] pointer-events-none" style={{ background: hexWithAlpha(accent, 0.2) }} />
+          <div className="absolute -bottom-40 -right-40 w-[520px] h-[520px] rounded-full blur-[160px] pointer-events-none" style={{ background: hexWithAlpha(accent, 0.12) }} />
+          <div className="absolute inset-0 bg-[radial-gradient(#1e1e28_1px,transparent_1px)] [background-size:26px_26px] opacity-30 pointer-events-none" />
+        </>
+      )}
 
       <div
         className="w-full max-w-md bg-[#0d0d14]/95 border rounded-3xl p-6 sm:p-8 backdrop-blur-xl relative z-10"

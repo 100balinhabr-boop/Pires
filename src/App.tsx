@@ -10,6 +10,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AdminUsersModal } from './components/AdminUsersModal';
 import { AdminPanel } from './components/AdminPanel';
 import { ClientPortalView } from './components/ClientPortalView';
+import { ExportedFavoriteChannel } from './utils/favoritesBackup';
 import { 
   Play, 
   Code2, 
@@ -222,8 +223,91 @@ export default function App() {
       try {
         localStorage.setItem(`iptv_fav_ids_${userKey}`, JSON.stringify(favIds));
       } catch {}
+
+      // Sincroniza no backend se houver sessão ativa
+      const token = localStorage.getItem('iptv_auth_token') || sessionStorage.getItem('iptv_auth_token');
+      if (token) {
+        fetch('/api/user/favorites', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ids: favIds }),
+        }).catch(() => {});
+      }
+
       return updated;
     });
+  };
+
+  const handleImportFavorites = (
+    importedIds: string[],
+    importedChannels: ExportedFavoriteChannel[] = [],
+    mode: 'merge' | 'replace' = 'merge'
+  ): { count: number; matched: number } => {
+    const userKey = currentUser?.id || 'guest';
+    const currentFavIds = getSavedFavoriteIds(userKey);
+
+    const importedIdsSet = new Set(importedIds.map((id) => String(id).trim()).filter(Boolean));
+    const importedUrls = new Set(
+      importedChannels.map((c) => String(c.streamUrl || '').trim()).filter(Boolean)
+    );
+    const importedNames = new Set(
+      importedChannels.map((c) => String(c.name || '').toLowerCase().trim()).filter(Boolean)
+    );
+
+    let finalFavIds: string[] = [];
+    if (mode === 'replace') {
+      finalFavIds = Array.from(importedIdsSet);
+    } else {
+      const merged = new Set([...currentFavIds, ...importedIdsSet]);
+      finalFavIds = Array.from(merged);
+    }
+
+    let matched = 0;
+    const updatedChannels = channels.map((c) => {
+      const cStream = String(c.streamUrl || '').trim();
+      const cName = String(c.name || '').toLowerCase().trim();
+
+      const isFav =
+        finalFavIds.includes(c.id) ||
+        importedUrls.has(cStream) ||
+        (cName && importedNames.has(cName)) ||
+        (mode === 'merge' && Boolean(c.isFavorite));
+
+      if (isFav) {
+        matched++;
+        if (!finalFavIds.includes(c.id)) {
+          finalFavIds.push(c.id);
+        }
+      }
+
+      return {
+        ...c,
+        isFavorite: isFav,
+      };
+    });
+
+    setChannels(updatedChannels);
+
+    try {
+      localStorage.setItem(`iptv_fav_ids_${userKey}`, JSON.stringify(finalFavIds));
+    } catch {}
+
+    const token = localStorage.getItem('iptv_auth_token') || sessionStorage.getItem('iptv_auth_token');
+    if (token) {
+      fetch('/api/user/favorites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ids: finalFavIds }),
+      }).catch(() => {});
+    }
+
+    return { count: finalFavIds.length, matched };
   };
 
   const handleLogout = async () => {
@@ -306,6 +390,7 @@ export default function App() {
         onLogout={handleLogout}
         onOpenImporter={() => setIsImporterOpen(true)}
         onToggleFavorite={handleToggleFavorite}
+        onFavoritesImported={(updated) => setChannels(updated)}
         isAdminPreview={userIsAdmin}
         onSwitchToAdmin={userIsAdmin ? () => {
           setAppViewMode('studio');
@@ -538,6 +623,7 @@ export default function App() {
               onSelectCategory={setSelectedCategory}
               onOpenImporter={() => setIsImporterOpen(true)}
               onToggleFavorite={handleToggleFavorite}
+              onFavoritesImported={(updated) => setChannels(updated)}
               currentUser={currentUser}
               onOpenAdminPanel={() => setShowAdminPanel(true)}
             />

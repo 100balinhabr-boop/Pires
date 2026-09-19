@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { UserAccount } from '../types';
+import { UserAccount, ClientBranding, BackgroundStyle } from '../types';
 import {
   Users, X, Search, Lock, Unlock, Trash2, UserPlus, RefreshCw,
   AlertCircle, CheckCircle, Calendar, Eye, EyeOff, Pencil, Tv,
@@ -7,8 +7,13 @@ import {
   UserCheck, UserX, TrendingUp, LayoutDashboard, Settings as SettingsIcon,
   LogOut, ChevronRight, Play, Menu, Shield, Sparkles, Check,
   Palette, GripVertical, Save, Upload, Image as ImageIcon, Type, Palette as PaletteIcon,
-  Tag, ScrollText, Activity
+  Tag, ScrollText, Activity, Globe, Monitor, Smartphone, Sliders,
+  CheckCircle2, Moon, Sun, Flame, ExternalLink, HelpCircle,
+  MessageSquare, Zap, DollarSign, Copy, Send, BellRing, Wallet, ArrowUpRight
 } from 'lucide-react';
+import { BrandingPreviewMockup } from './BrandingPreviewMockup';
+import { AdminDashboard } from './AdminDashboard';
+import { applyDynamicBranding, hexWithAlpha } from '../utils/dynamicBranding';
 
 interface AdminPanelProps {
   currentAdmin: UserAccount;
@@ -20,13 +25,6 @@ interface ClientTabConfig {
   id: 'movies' | 'series' | 'live' | 'settings';
   label: string;
   visible: boolean;
-}
-
-interface ClientBranding {
-  appName: string;
-  accentColor: string;
-  logoUrl: string;
-  footerText: string;
 }
 
 interface AuditEntry {
@@ -49,7 +47,120 @@ const DEFAULT_BRANDING: ClientBranding = {
   accentColor: '#dc2626',
   logoUrl: '',
   footerText: 'Transmissão HD • Canais ao Vivo • Player Rápido',
+  backgroundStyle: 'default',
+  faviconSync: true,
 };
+
+interface ThemePreset {
+  id: string;
+  name: string;
+  description: string;
+  accentColor: string;
+  backgroundStyle: BackgroundStyle;
+  badge: string;
+  colorName: string;
+  previewGradient: string;
+}
+
+const THEME_PRESETS: ThemePreset[] = [
+  {
+    id: 'netflix-red',
+    name: 'Cinema Red',
+    description: 'Estilo cinematográfico Netflix com vermelho marcante',
+    accentColor: '#e50914',
+    backgroundStyle: 'gradient',
+    badge: 'Popular',
+    colorName: 'Vermelho Cinema',
+    previewGradient: 'linear-gradient(135deg, #e50914 0%, #08080c 100%)',
+  },
+  {
+    id: 'oled-gold',
+    name: 'OLED Black VIP',
+    description: 'Preto 100% puro com dourado para Smart TVs OLED',
+    accentColor: '#f59e0b',
+    backgroundStyle: 'oled',
+    badge: 'OLED TV',
+    colorName: 'Âmbar Dourado',
+    previewGradient: 'linear-gradient(135deg, #f59e0b 0%, #000000 100%)',
+  },
+  {
+    id: 'cyber-neon',
+    name: 'Cyberpunk Neon',
+    description: 'Ciano futurista e dinâmico com atmosfera mesh neon',
+    accentColor: '#06b6d4',
+    backgroundStyle: 'mesh',
+    badge: 'Futurista',
+    colorName: 'Ciano Neon',
+    previewGradient: 'linear-gradient(135deg, #06b6d4 0%, #080b18 100%)',
+  },
+  {
+    id: 'emerald-sports',
+    name: 'Esmeralda Sports',
+    description: 'Verde esportivo e moderno para canais de futebol',
+    accentColor: '#10b981',
+    backgroundStyle: 'gradient',
+    badge: 'Esportes',
+    colorName: 'Verde Esmeralda',
+    previewGradient: 'linear-gradient(135deg, #10b981 0%, #050a08 100%)',
+  },
+  {
+    id: 'royal-blue',
+    name: 'Royal Blue Tech',
+    description: 'Azul clássico corporativo e de alta estabilidade',
+    accentColor: '#2563eb',
+    backgroundStyle: 'default',
+    badge: 'Clássico',
+    colorName: 'Azul Real',
+    previewGradient: 'linear-gradient(135deg, #2563eb 0%, #080b18 100%)',
+  },
+  {
+    id: 'ultra-violet',
+    name: 'Ultra Violet',
+    description: 'Roxo elétrico marcante com alta fidelidade visual',
+    accentColor: '#8b5cf6',
+    backgroundStyle: 'mesh',
+    badge: 'Gamer',
+    colorName: 'Roxo Elétrico',
+    previewGradient: 'linear-gradient(135deg, #8b5cf6 0%, #0a0718 100%)',
+  },
+  {
+    id: 'crimson-dark',
+    name: 'Crimson Original',
+    description: 'O vermelho tradicional refinado padrão RPR TV',
+    accentColor: '#dc2626',
+    backgroundStyle: 'default',
+    badge: 'Padrão',
+    colorName: 'Crimson',
+    previewGradient: 'linear-gradient(135deg, #dc2626 0%, #08080c 100%)',
+  },
+];
+
+const BACKGROUND_OPTIONS: { id: BackgroundStyle; name: string; desc: string; icon: string }[] = [
+  {
+    id: 'default',
+    name: 'Padrão Noturno',
+    desc: 'Grafite escuro #08080c equilibrado e elegante para qualquer aparelho.',
+    icon: '🌙',
+  },
+  {
+    id: 'oled',
+    name: 'OLED Black Puro',
+    desc: 'Preto 100% puro (#000000). Máximo contraste e economia em Smart TVs OLED.',
+    icon: '⬛',
+  },
+  {
+    id: 'gradient',
+    name: 'Gradiente Suave',
+    desc: 'Fusão cinematográfica profunda da cor da marca descendo para o fundo.',
+    icon: '🎨',
+  },
+  {
+    id: 'mesh',
+    name: 'Mesh & Glow Neon',
+    desc: 'Iluminação ambiente no topo criando aura imersiva de cinema moderno.',
+    icon: '✨',
+  },
+];
 
 const COLOR_PRESETS = [
   { name: 'Vermelho', value: '#dc2626' },
@@ -79,14 +190,51 @@ export const formatDateDisplay = (dateStr?: string | null): string => {
 
 export const getExpirationInfo = (expirationDate?: string | null) => {
   if (!expirationDate || expirationDate === 'vitalicio') {
-    return { status: 'vitalicio' as const, label: 'Vitalício', isExpired: false, isExpiring7: false };
+    return { status: 'vitalicio' as const, label: 'Vitalício', isExpired: false, isExpiring7: false, daysLeft: 9999, hoursLeft: 99999 };
   }
-  const exp = new Date(`${expirationDate.slice(0, 10)}T23:59:59`);
+  const exp = new Date(expirationDate.includes('T') ? expirationDate : `${expirationDate.slice(0, 10)}T23:59:59`);
   const diffMs = exp.getTime() - Date.now();
   const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  if (daysLeft < 0) return { status: 'expired' as const, label: `Vencido (${formatDateDisplay(expirationDate)})`, isExpired: true, isExpiring7: false };
-  if (daysLeft <= 7) return { status: 'warning' as const, label: `Vence em ${daysLeft}d`, isExpired: false, isExpiring7: true };
-  return { status: 'active' as const, label: `Até ${formatDateDisplay(expirationDate)}`, isExpired: false, isExpiring7: false };
+  const hoursLeft = Math.ceil(diffMs / (1000 * 60 * 60));
+
+  if (diffMs < 0) {
+    return {
+      status: 'expired' as const,
+      label: `Vencido (${formatDateDisplay(expirationDate)})`,
+      isExpired: true,
+      isExpiring7: false,
+      daysLeft,
+      hoursLeft,
+    };
+  }
+  if (hoursLeft <= 24 && hoursLeft > 0) {
+    return {
+      status: 'warning' as const,
+      label: hoursLeft <= 4 ? `Vence em ${hoursLeft}h` : 'Vence Hoje',
+      isExpired: false,
+      isExpiring7: true,
+      daysLeft: 0,
+      hoursLeft,
+    };
+  }
+  if (daysLeft <= 7) {
+    return {
+      status: 'warning' as const,
+      label: `Vence em ${daysLeft}d`,
+      isExpired: false,
+      isExpiring7: true,
+      daysLeft,
+      hoursLeft,
+    };
+  }
+  return {
+    status: 'active' as const,
+    label: `Até ${formatDateDisplay(expirationDate)}`,
+    isExpired: false,
+    isExpiring7: false,
+    daysLeft,
+    hoursLeft,
+  };
 };
 
 function formatAuditAction(action: string): { label: string; color: string } {
@@ -150,6 +298,107 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
   const currentAdminRole = normalizeUserRole(currentAdmin.role);
   const isMaster = currentAdminRole === 'AdminMaster';
   const isRevenda = currentAdminRole === 'AdminRevenda';
+
+  // Dashboard Financial & Quick Test states
+  const [ticketPrice, setTicketPrice] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('rpr_admin_ticket_price');
+      return saved ? Number(saved) || 35 : 35;
+    } catch {
+      return 35;
+    }
+  });
+  const [isEditingTicket, setIsEditingTicket] = useState(false);
+  const [tempTicket, setTempTicket] = useState(String(ticketPrice));
+
+  const [isQuickTestOpen, setIsQuickTestOpen] = useState(false);
+  const [quickTestDuration, setQuickTestDuration] = useState<number>(4);
+  const [quickTestName, setQuickTestName] = useState('');
+  const [quickTestResult, setQuickTestResult] = useState<{ username: string; password: string; expDate: string; hours: number } | null>(null);
+  const [isGeneratingTest, setIsGeneratingTest] = useState(false);
+  const [copiedFeedback, setCopiedFeedback] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, label: string = 'Copiado!') => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    setCopiedFeedback(label);
+    setTimeout(() => setCopiedFeedback(null), 2500);
+  };
+
+  const handleCreateQuickTest = async () => {
+    setIsGeneratingTest(true);
+    try {
+      const randomDigits = Math.floor(1000 + Math.random() * 9000);
+      const testUsername = `teste_${randomDigits}`;
+      const testPassword = `${Math.floor(1000 + Math.random() * 9000)}`;
+      const expDate = new Date(Date.now() + quickTestDuration * 60 * 60 * 1000).toISOString();
+      const testName = quickTestName.trim() || `Teste ${quickTestDuration}h`;
+
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          name: testName,
+          username: testUsername,
+          password: testPassword,
+          role: 'UsuarioComum',
+          expirationDate: expDate,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.users) {
+        setUsers(data.users);
+        setQuickTestResult({
+          username: testUsername,
+          password: testPassword,
+          expDate,
+          hours: quickTestDuration,
+        });
+        setFeedbackMsg({ type: 'success', text: `Teste rápido @${testUsername} gerado com sucesso!` });
+      } else {
+        setFeedbackMsg({ type: 'error', text: data.error || 'Erro ao gerar teste.' });
+      }
+    } catch {
+      setFeedbackMsg({ type: 'error', text: 'Falha de conexão ao gerar teste.' });
+    } finally {
+      setIsGeneratingTest(false);
+    }
+  };
+
+  const handleSendWhatsAppCobrança = (user: UserAccount, daysLeft: number) => {
+    const isExp = daysLeft < 0;
+    const statusStr = isExp
+      ? `seu acesso venceu há ${Math.abs(daysLeft)} dia(s)`
+      : daysLeft === 0
+      ? `seu acesso vence HOJE`
+      : `seu acesso vence em ${daysLeft} dia(s)`;
+
+    const text = `Olá, ${user.name || user.username}! Tudo bem?\n\nPassando para lembrar que ${statusStr} no aplicativo *${branding.appName}*.\n\nPara renovar seu plano e continuar assistindo normalmente sem interrupções, basta responder a esta mensagem solicitando a chave PIX.\n\nFicamos à disposição e obrigado pela preferência! 📺`;
+
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const handleCopyCobrançaMsg = (user: UserAccount, daysLeft: number) => {
+    const isExp = daysLeft < 0;
+    const statusStr = isExp
+      ? `seu acesso venceu há ${Math.abs(daysLeft)} dia(s)`
+      : daysLeft === 0
+      ? `seu acesso vence HOJE`
+      : `seu acesso vence em ${daysLeft} dia(s)`;
+
+    const text = `Olá, ${user.name || user.username}! Tudo bem?\n\nPassando para lembrar que ${statusStr} no aplicativo *${branding.appName}*.\n\nPara renovar seu plano e continuar assistindo normalmente sem interrupções, basta responder a esta mensagem solicitando a chave PIX.\n\nFicamos à disposição e obrigado pela preferência! 📺`;
+
+    copyToClipboard(text, 'Mensagem copiada!');
+  };
 
   const [formName, setFormName] = useState('');
   const [formUsername, setFormUsername] = useState('');
@@ -236,7 +485,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
   }, []);
 
   useEffect(() => {
-    if (section === 'logs') fetchAudit();
+    if (section === 'logs' || section === 'dashboard') fetchAudit();
   }, [section]);
 
   useEffect(() => {
@@ -487,6 +736,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
     if (logoInputRef.current) logoInputRef.current.value = '';
   };
 
+  const handleApplyPreset = (preset: ThemePreset) => {
+    setBranding(prev => ({
+      ...prev,
+      accentColor: preset.accentColor,
+      backgroundStyle: preset.backgroundStyle,
+    }));
+    setFeedbackMsg({
+      type: 'success',
+      text: `Tema "${preset.name}" selecionado! Confira no simulador ao lado e clique em Salvar.`
+    });
+  };
+
   const handleSaveAppearance = async () => {
     setSavingAppearance(true);
     try {
@@ -497,11 +758,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
       });
       const data = await res.json();
       if (data.success) {
+        applyDynamicBranding(branding);
         setFeedbackMsg({
           type: 'success',
           text: isMaster
-            ? 'Aparência global atualizada! Vale pra clientes diretos.'
-            : 'Aparência da sua revenda salva! Só seus clientes verão.'
+            ? 'Aparência global atualizada e aplicada com sucesso!'
+            : 'Aparência da sua revenda salva! Aplicada aos seus clientes.'
         });
       } else {
         setFeedbackMsg({ type: 'error', text: data.error || 'Erro ao salvar.' });
@@ -527,6 +789,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
   const blockedUsersCount = users.filter(u => u.isBlocked).length;
   const expiring7Users = users.filter(u => getExpirationInfo(u.expirationDate).isExpiring7).length;
   const activeClients = users.filter(u => normalizeUserRole(u.role) === 'UsuarioComum' && !u.isBlocked && !getExpirationInfo(u.expirationDate).isExpired).length;
+
+  const clientsExpiringSoon = useMemo(() => {
+    let list = users.filter(u => normalizeUserRole(u.role) === 'UsuarioComum');
+    if (isRevenda) {
+      list = list.filter(u => u.createdBy === currentAdmin.username);
+    }
+    return list
+      .map(u => ({
+        user: u,
+        exp: getExpirationInfo(u.expirationDate),
+      }))
+      .filter(item => item.exp.status !== 'vitalicio' && (item.exp.isExpiring7 || (item.exp.isExpired && item.exp.daysLeft >= -5)))
+      .sort((a, b) => a.exp.daysLeft - b.exp.daysLeft);
+  }, [users, isRevenda, currentAdmin.username]);
+
+  const urgentTodayCount = useMemo(() => {
+    return clientsExpiringSoon.filter(c => c.exp.daysLeft === 0 && !c.exp.isExpired).length;
+  }, [clientsExpiringSoon]);
+
+  const retentionRate = clientUsers > 0 ? Math.round((activeClients / clientUsers) * 100) : 100;
+  const estimatedMRR = activeClients * ticketPrice;
+  const weeklyReceivable = expiring7Users * ticketPrice;
+  const recoverableAmount = expiredUsers * ticketPrice;
 
   const revendedoresList = useMemo(() => {
     return users.filter(u => normalizeUserRole(u.role) === 'AdminRevenda');
@@ -687,42 +972,422 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {section === 'dashboard' && (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              {[
-                { label: isRevenda ? 'Meus Clientes Ativos' : 'Clientes Ativos', value: activeClients, color: 'emerald', icon: UserCheck, target: 'clients' as Section },
-                { label: 'Vencendo 7d', value: expiring7Users, color: 'amber', icon: TrendingUp, target: 'clients' as Section },
-                { label: 'Vencidos', value: expiredUsers, color: 'rose', icon: Clock, target: 'clients' as Section },
-                { label: 'Revendas', value: revendaUsers, color: 'blue', icon: Briefcase, target: 'revendas' as Section, masterOnly: true },
-                { label: 'Admins', value: masterUsers, color: 'amber', icon: Crown, target: 'admins' as Section, masterOnly: true },
-                { label: 'Bloqueados', value: blockedUsersCount, color: 'slate', icon: UserX, target: null as any },
-              ].filter(c => !(c as any).masterOnly || isMaster).map((card, i) => {
-                const Icon = card.icon;
-                const colorMap: any = {
-                  emerald: 'from-emerald-950/40 border-emerald-800/40 text-emerald-400',
-                  amber: 'from-amber-950/40 border-amber-800/40 text-amber-400',
-                  rose: 'from-rose-950/40 border-rose-800/40 text-rose-400',
-                  blue: 'from-blue-950/40 border-blue-800/40 text-blue-400',
-                  slate: 'from-slate-900/60 border-slate-800/60 text-slate-400',
-                };
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => card.target && setSection(card.target as Section)}
-                    disabled={!card.target}
-                    className={`text-left p-5 rounded-2xl bg-gradient-to-br ${colorMap[card.color]} to-[#0b0b12] border transition ${card.target ? 'cursor-pointer hover:scale-[1.02]' : 'cursor-default'}`}
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className={`w-12 h-12 rounded-xl bg-${card.color}-500/15 border border-${card.color}-500/30 flex items-center justify-center`}>
-                        <Icon className={`w-6 h-6`} />
-                      </div>
-                      {card.target && <ChevronRight className="w-5 h-5 text-slate-600" />}
+            <div className="space-y-6">
+              {/* Banner de Boas-Vindas & Ações Rápidas */}
+              <div className="bg-gradient-to-r from-[#12121f] via-[#0f111c] to-[#0d0d16] border border-slate-800/80 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden">
+                <div
+                  className="absolute top-0 right-0 w-80 h-full opacity-15 pointer-events-none blur-3xl"
+                  style={{ background: branding.accentColor }}
+                />
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Servidor Online • 100% Operacional
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
+                        <Shield className="w-3 h-3 text-blue-400" /> {isMaster ? 'Painel Master' : 'Painel Revenda'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                        <Activity className="w-3 h-3 text-purple-400" /> {retentionRate}% Retenção
+                      </span>
                     </div>
-                    <p className="text-xs uppercase font-bold tracking-wider">{card.label}</p>
-                    <p className="text-4xl font-black text-white mt-1">{card.value}</p>
-                  </button>
-                );
-              })}
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                      Olá, {currentAdmin.name || currentAdmin.username} 👋
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                      Central de controle da sua base de assinantes e operação IPTV em tempo real.
+                    </p>
+                  </div>
+
+                  {/* Atalhos Rápidos */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsQuickTestOpen(true)}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-lg transition hover:scale-105 active:scale-95"
+                      style={{ background: `linear-gradient(135deg, ${branding.accentColor}, #b91c1c)` }}
+                    >
+                      <Zap className="w-3.5 h-3.5 fill-current" />
+                      <span>Gerar Teste Rápido</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSection('create')}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700/80 transition hover:scale-105 active:scale-95"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Novo Cliente</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSection('appearance')}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700/60 transition hover:scale-105"
+                    >
+                      <Palette className="w-3.5 h-3.5 text-purple-400" />
+                      <span className="hidden sm:inline">Aparência</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid de Cards de Métricas e Faturamento */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Clientes Ativos */}
+                <button
+                  type="button"
+                  onClick={() => setSection('clients')}
+                  className="text-left p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-[#0d1411] to-[#0b0b12] border border-emerald-800/40 transition hover:scale-[1.02] cursor-pointer group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                      <UserCheck className="w-5 h-5" />
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      {retentionRate}% da base
+                    </span>
+                  </div>
+                  <p className="text-[11px] uppercase font-bold tracking-wider text-emerald-400/80">
+                    {isRevenda ? 'Meus Clientes Ativos' : 'Clientes Ativos'}
+                  </p>
+                  <p className="text-3xl sm:text-4xl font-black text-white mt-1">{activeClients}</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Assinaturas válidas</p>
+                </button>
+
+                {/* Faturamento Estimado (MRR) */}
+                <div className="text-left p-5 rounded-2xl bg-gradient-to-br from-blue-950/40 via-[#0a111a] to-[#0b0b12] border border-blue-800/40 relative group">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                      <DollarSign className="w-5 h-5" />
+                    </div>
+                    {isEditingTicket ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={tempTicket}
+                          onChange={e => setTempTicket(e.target.value)}
+                          className="w-14 bg-slate-900 border border-blue-500 rounded px-1 py-0.5 text-xs text-white text-right"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const val = Math.max(1, Number(tempTicket) || 35);
+                            setTicketPrice(val);
+                            try { localStorage.setItem('rpr_admin_ticket_price', String(val)); } catch {}
+                            setIsEditingTicket(false);
+                          }}
+                          className="p-1 bg-blue-600 rounded text-[10px] text-white"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setTempTicket(String(ticketPrice)); setIsEditingTicket(true); }}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30"
+                        title="Clique para alterar valor médio da mensalidade"
+                      >
+                        R$ {ticketPrice}/mês ✎
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] uppercase font-bold tracking-wider text-blue-400/80">Receita Estimada (MRR)</p>
+                  <p className="text-2xl sm:text-3xl font-black text-white mt-1">
+                    R$ {estimatedMRR.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">Base × R$ {ticketPrice}</p>
+                </div>
+
+                {/* Vencendo em até 7 Dias */}
+                <button
+                  type="button"
+                  onClick={() => setSection('clients')}
+                  className="text-left p-5 rounded-2xl bg-gradient-to-br from-amber-950/40 via-[#16120b] to-[#0b0b12] border border-amber-800/40 transition hover:scale-[1.02] cursor-pointer group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    {urgentTodayCount > 0 ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/30 text-rose-300 border border-rose-500/50 animate-pulse">
+                        {urgentTodayCount} hoje!
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        Próximos 7d
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] uppercase font-bold tracking-wider text-amber-400/80">Vencendo em 7d</p>
+                  <p className="text-3xl sm:text-4xl font-black text-white mt-1">{expiring7Users}</p>
+                  <p className="text-[11px] text-amber-300/80 mt-1">
+                    R$ {weeklyReceivable.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} a renovar
+                  </p>
+                </button>
+
+                {/* Vencidos / Recuperáveis */}
+                <button
+                  type="button"
+                  onClick={() => setSection('clients')}
+                  className="text-left p-5 rounded-2xl bg-gradient-to-br from-rose-950/40 via-[#180b0e] to-[#0b0b12] border border-rose-800/40 transition hover:scale-[1.02] cursor-pointer group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="w-11 h-11 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      Inadimplentes
+                    </span>
+                  </div>
+                  <p className="text-[11px] uppercase font-bold tracking-wider text-rose-400/80">Vencidos</p>
+                  <p className="text-3xl sm:text-4xl font-black text-white mt-1">{expiredUsers}</p>
+                  <p className="text-[11px] text-rose-300/80 mt-1">
+                    R$ {recoverableAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} recuperável
+                  </p>
+                </button>
+              </div>
+
+              {/* Barra de Saúde da Base (Termômetro Visual) */}
+              <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl p-5 shadow-lg">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-emerald-400" />
+                      Saúde & Distribuição da Base de Assinantes
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {activeClients} de {clientUsers} clientes estão em dia ({retentionRate}% de adimplência)
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-slate-300">
+                    Total: {clientUsers} Clientes
+                  </span>
+                </div>
+
+                {/* Barra multi-colorida */}
+                <div className="w-full h-3.5 bg-slate-800/80 rounded-full overflow-hidden flex shadow-inner">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500"
+                    style={{ width: `${clientUsers > 0 ? (activeClients / clientUsers) * 100 : 0}%` }}
+                    title={`Ativos: ${activeClients}`}
+                  />
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-500"
+                    style={{ width: `${clientUsers > 0 ? (expiring7Users / clientUsers) * 100 : 0}%` }}
+                    title={`Vencendo 7d: ${expiring7Users}`}
+                  />
+                  <div
+                    className="h-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-500"
+                    style={{ width: `${clientUsers > 0 ? (expiredUsers / clientUsers) * 100 : 0}%` }}
+                    title={`Vencidos: ${expiredUsers}`}
+                  />
+                </div>
+
+                {/* Legenda da barra */}
+                <div className="flex flex-wrap items-center gap-4 sm:gap-6 mt-3 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                    <span className="text-slate-300 font-medium">Ativos:</span>
+                    <span className="text-white font-bold">{activeClients} ({clientUsers > 0 ? Math.round((activeClients / clientUsers) * 100) : 0}%)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                    <span className="text-slate-300 font-medium">Vencendo em 7d:</span>
+                    <span className="text-white font-bold">{expiring7Users} ({clientUsers > 0 ? Math.round((expiring7Users / clientUsers) * 100) : 0}%)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+                    <span className="text-slate-300 font-medium">Vencidos:</span>
+                    <span className="text-white font-bold">{expiredUsers} ({clientUsers > 0 ? Math.round((expiredUsers / clientUsers) * 100) : 0}%)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção 2 Colunas: Central de Cobrança WhatsApp e Feed de Atividades Recentes */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Coluna Esquerda: Central de Cobranças Urgentes (2/3 de largura) */}
+                <div className="lg:col-span-2 bg-[#0f0f17] border border-slate-800/80 rounded-2xl p-5 shadow-lg flex flex-col">
+                  <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                        <BellRing className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white tracking-tight flex items-center gap-2">
+                          Vencimentos Imediatos & Cobrança Rápida
+                          {clientsExpiringSoon.length > 0 && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              {clientsExpiringSoon.length} pendentes
+                            </span>
+                          )}
+                        </h3>
+                        <p className="text-xs text-slate-400">
+                          Dispare lembretes cordiais no WhatsApp ou renove acessos com 1 clique.
+                        </p>
+                      </div>
+                    </div>
+                    {copiedFeedback && (
+                      <span className="text-[11px] font-bold text-emerald-400 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/40 animate-fade-in">
+                        ✓ {copiedFeedback}
+                      </span>
+                    )}
+                  </div>
+
+                  {clientsExpiringSoon.length === 0 ? (
+                    <div className="py-12 flex flex-col items-center justify-center text-center">
+                      <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-3">
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                      <h4 className="text-sm font-bold text-white">Nenhum cliente vencendo nos próximos 7 dias!</h4>
+                      <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                        Todos os seus assinantes estão com mensalidades ativas e em dia. Parabéns pela retenção!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 overflow-y-auto max-h-[380px] pr-1">
+                      {clientsExpiringSoon.map(({ user, exp }) => {
+                        const isToday = exp.daysLeft === 0 && !exp.isExpired;
+                        const isTomorow = exp.daysLeft === 1;
+                        const isExpired = exp.isExpired;
+
+                        return (
+                          <div
+                            key={user.id}
+                            className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                              isToday
+                                ? 'bg-rose-950/30 border-rose-700/50 shadow-sm'
+                                : isExpired
+                                ? 'bg-slate-900/60 border-slate-800 text-slate-300'
+                                : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/70'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                                isToday ? 'bg-rose-600 text-white animate-pulse' : 'bg-slate-800 text-slate-200 border border-slate-700'
+                              }`}>
+                                {user.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-xs font-bold text-white truncate">{user.name}</p>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                                    isToday
+                                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+                                      : isTomorow
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                      : isExpired
+                                      ? 'bg-rose-950/60 text-rose-400 border-rose-800/50'
+                                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                  }`}>
+                                    {isToday ? 'VENCE HOJE' : isTomorow ? 'Vence Amanhã' : isExpired ? `Vencido há ${Math.abs(exp.daysLeft)}d` : `Vence em ${exp.daysLeft} dias`}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 font-mono">@{user.username}</p>
+                              </div>
+                            </div>
+
+                            {/* Botões de Ação Rápida */}
+                            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                              {/* Botão WhatsApp */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendWhatsAppCobrança(user, exp.daysLeft)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm active:scale-95"
+                                title="Abrir mensagem de cobrança no WhatsApp"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                <span>WhatsApp</span>
+                              </button>
+
+                              {/* Botão Copiar Texto */}
+                              <button
+                                type="button"
+                                onClick={() => handleCopyCobrançaMsg(user, exp.daysLeft)}
+                                className="p-2 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+                                title="Copiar mensagem amigável de cobrança"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Botão Renovar 30d */}
+                              <button
+                                type="button"
+                                onClick={() => handleQuickRenew(user, 30)}
+                                disabled={actionLoadingId === user.id}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 transition disabled:opacity-50"
+                                title="Renovar por +30 dias"
+                              >
+                                {actionLoadingId === user.id ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Zap className="w-3.5 h-3.5" />
+                                )}
+                                <span>+30d</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Coluna Direita: Feed de Últimas Atividades (1/3 de largura) */}
+                <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl p-5 shadow-lg flex flex-col">
+                  <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                        <Activity className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white tracking-tight">Atividades Recentes</h3>
+                        <p className="text-xs text-slate-400">Histórico de ações</p>
+                      </div>
+                    </div>
+                    {isMaster && (
+                      <button
+                        type="button"
+                        onClick={() => setSection('logs')}
+                        className="text-[11px] text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1"
+                      >
+                        Ver todos <ChevronRight className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  {auditEntries.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center py-8 text-center text-slate-500">
+                      <ScrollText className="w-8 h-8 mb-2 opacity-50" />
+                      <p className="text-xs">Nenhuma atividade registrada recentemente.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 overflow-y-auto max-h-[380px] pr-1">
+                      {auditEntries.slice(0, 7).map((entry, idx) => {
+                        const act = formatAuditAction(entry.action);
+                        return (
+                          <div key={idx} className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800/70 text-xs flex items-start gap-2.5">
+                            <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: branding.accentColor }} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold text-white truncate">{act.label}</span>
+                                <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                                  {formatRelativeTime(entry.ts)}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                                Por <span className="text-slate-300 font-mono">@{entry.actor}</span>
+                                {entry.target && <span> para <span className="text-slate-300 font-mono">@{entry.target}</span></span>}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -804,278 +1469,571 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
           )}
 
           {section === 'appearance' && (
-            <div className="max-w-3xl mx-auto space-y-5">
-              <div className="p-5 rounded-2xl border flex items-center gap-3" style={{ background: `linear-gradient(135deg, ${branding.accentColor}20, #0f0f17)`, borderColor: `${branding.accentColor}60` }}>
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center border" style={{ background: `${branding.accentColor}25`, borderColor: `${branding.accentColor}60` }}>
-                  <Palette className="w-6 h-6" style={{ color: branding.accentColor }} />
+            <div className="space-y-6">
+              {/* Header do Módulo de Aparência */}
+              <div
+                className="p-5 sm:p-6 rounded-3xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl"
+                style={{
+                  background: `linear-gradient(135deg, ${hexWithAlpha(branding.accentColor, 0.15)}, #0f0f17)`,
+                  borderColor: hexWithAlpha(branding.accentColor, 0.4),
+                }}
+              >
+                <div className="flex items-center gap-4">
+                  <div
+                    className="w-14 h-14 rounded-2xl flex items-center justify-center border shadow-lg shrink-0"
+                    style={{
+                      background: hexWithAlpha(branding.accentColor, 0.25),
+                      borderColor: hexWithAlpha(branding.accentColor, 0.5),
+                    }}
+                  >
+                    <Palette className="w-7 h-7" style={{ color: branding.accentColor }} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-bold text-white">
+                        {isMaster ? 'Aparência Global & Identidade Visual' : 'Aparência da Sua Revenda'}
+                      </h3>
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
+                        style={{
+                          background: hexWithAlpha(branding.accentColor, 0.25),
+                          color: branding.accentColor,
+                        }}
+                      >
+                        {isMaster ? 'Master' : 'Revenda'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {isMaster
+                        ? 'Configuração padrão do aplicativo. Reflete nos clientes diretos e define a identidade de entrada.'
+                        : 'Personalize com sua marca própria. O logotipo, cores, abas e rodapé só aparecerão para os seus clientes.'}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-base font-bold text-white">
-                    {isMaster ? 'Aparência Global' : 'Aparência da Sua Revenda'}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {isMaster
-                      ? 'Configuração padrão do app. Vale para clientes criados por você (diretos).'
-                      : 'Personalize como seus clientes veem o app. Só eles verão suas mudanças.'}
-                  </p>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={onGoToPlayer}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer shadow-sm"
+                    title="Visualizar no Player como cliente final"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Abrir no Player</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAppearance}
+                    disabled={savingAppearance}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-lg flex items-center gap-1.5 disabled:opacity-50 transition cursor-pointer"
+                    style={{ background: `linear-gradient(135deg, ${branding.accentColor}, ${branding.accentColor}cc)` }}
+                  >
+                    {savingAppearance ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    <span>{savingAppearance ? 'Salvando...' : 'Salvar'}</span>
+                  </button>
                 </div>
               </div>
 
               {isRevenda && (
-                <div className="p-4 rounded-2xl bg-blue-950/20 border border-blue-800/40">
+                <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-800/50 flex items-start gap-3">
+                  <Shield className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
                   <p className="text-xs text-blue-200 leading-relaxed">
-                    <strong>Sua marca, seus clientes:</strong> o que você configurar aqui só aparece pros clientes que <strong>você cadastrou</strong>.
+                    <strong>White Label Exclusivo:</strong> O nome do app, logotipo, cor e rodapé configurados aqui são exclusivos dos clientes vinculados à sua revenda. Eles nunca verão a marca padrão da plataforma.
                   </p>
                 </div>
               )}
 
-              <div className="bg-[#0f0f17] border border-slate-800/60 rounded-2xl overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-800/60 flex items-center gap-2">
-                  <ImageIcon className="w-4 h-4" style={{ color: branding.accentColor }} />
-                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Identidade Visual</span>
-                </div>
+              {/* Grid Responsivo Principal: Configurações na esquerda + Mockup na direita */}
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                {/* COLUNA ESQUERDA: Configurações & Controles (7 colunas no XL) */}
+                <div className="xl:col-span-7 space-y-6">
 
-                <div className="p-5 space-y-5">
-                  <div>
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
-                      <Type className="w-3.5 h-3.5" />
-                      Nome do App
-                    </label>
-                    <input
-                      type="text"
-                      value={branding.appName}
-                      onChange={e => setBranding(prev => ({ ...prev, appName: e.target.value.slice(0, 30) }))}
-                      maxLength={30}
-                      placeholder="RPR TV"
-                      className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-2.5 text-sm font-bold text-white placeholder-slate-500 focus:outline-none"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1 font-mono">{branding.appName.length}/30 caracteres</p>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
-                      <PaletteIcon className="w-3.5 h-3.5" />
-                      Cor Principal
-                    </label>
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {COLOR_PRESETS.map(c => (
-                        <button
-                          key={c.value}
-                          type="button"
-                          onClick={() => setBranding(prev => ({ ...prev, accentColor: c.value }))}
-                          className={`w-10 h-10 rounded-xl border-2 transition ${branding.accentColor === c.value ? 'scale-110 shadow-lg' : 'hover:scale-105'}`}
-                          style={{
-                            background: c.value,
-                            borderColor: branding.accentColor === c.value ? '#fff' : 'transparent',
-                          }}
-                          title={c.name}
-                        >
-                          {branding.accentColor === c.value && <Check className="w-5 h-5 text-white mx-auto" />}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={branding.accentColor}
-                        onChange={e => setBranding(prev => ({ ...prev, accentColor: e.target.value }))}
-                        className="w-12 h-10 rounded-xl bg-transparent border border-slate-700/80 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={branding.accentColor}
-                        onChange={e => {
-                          const v = e.target.value;
-                          if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setBranding(prev => ({ ...prev, accentColor: v }));
-                        }}
-                        maxLength={7}
-                        placeholder="#dc2626"
-                        className="w-28 bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-2 text-sm font-mono text-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
-                      <ImageIcon className="w-3.5 h-3.5" />
-                      Logo (opcional)
-                    </label>
-                    <div className="flex items-center gap-4">
-                      <div
-                        className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 overflow-hidden shrink-0"
-                        style={{ background: `${branding.accentColor}20`, borderColor: `${branding.accentColor}60` }}
-                      >
-                        {branding.logoUrl ? (
-                          <img src={branding.logoUrl} alt="logo" className="w-full h-full object-contain" />
-                        ) : (
-                          <Tv className="w-8 h-8 text-slate-500" />
-                        )}
+                  {/* 1. Presets Rápidos de Temas Profissionais */}
+                  <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl overflow-hidden shadow-lg">
+                    <div className="px-5 py-4 border-b border-slate-800/80 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Flame className="w-4 h-4 text-amber-400" />
+                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                          Temas Prontos (1 Clique)
+                        </span>
                       </div>
-                      <div className="flex-1 space-y-2">
-                        <input
-                          ref={logoInputRef}
-                          type="file"
-                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                          onChange={handleLogoUpload}
-                          className="hidden"
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => logoInputRef.current?.click()}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
-                          >
-                            <Upload className="w-3.5 h-3.5" />
-                            Escolher imagem
-                          </button>
-                          {branding.logoUrl && (
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        Cores e estilos calibrados
+                      </span>
+                    </div>
+
+                    <div className="p-4 sm:p-5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {THEME_PRESETS.map((preset) => {
+                          const isSelected =
+                            branding.accentColor.toLowerCase() === preset.accentColor.toLowerCase() &&
+                            (branding.backgroundStyle || 'default') === preset.backgroundStyle;
+
+                          return (
                             <button
+                              key={preset.id}
                               type="button"
-                              onClick={() => setBranding(prev => ({ ...prev, logoUrl: '' }))}
-                              className="px-3 py-2 rounded-xl text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/50"
+                              onClick={() => handleApplyPreset(preset)}
+                              className={`p-3 rounded-2xl border text-left transition relative flex flex-col justify-between group cursor-pointer ${
+                                isSelected
+                                  ? 'bg-[#181928] border-white/60 shadow-md ring-1 ring-white/40'
+                                  : 'bg-[#12131e] border-slate-800/90 hover:border-slate-700 hover:bg-[#151624]'
+                              }`}
                             >
-                              Remover
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className="w-5 h-5 rounded-lg border border-white/20 shadow-sm shrink-0"
+                                    style={{ background: preset.accentColor }}
+                                  />
+                                  <span className="text-xs font-bold text-white group-hover:text-amber-200 transition">
+                                    {preset.name}
+                                  </span>
+                                </div>
+                                <span
+                                  className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+                                  style={{
+                                    background: hexWithAlpha(preset.accentColor, 0.2),
+                                    color: preset.accentColor,
+                                  }}
+                                >
+                                  {preset.badge}
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed mb-2">
+                                {preset.description}
+                              </p>
+
+                              <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-slate-800/60 font-mono">
+                                <span className="text-slate-400">{preset.colorName}</span>
+                                <span className="text-slate-500 uppercase">{preset.backgroundStyle}</span>
+                              </div>
                             </button>
-                          )}
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. Identidade Visual */}
+                  <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl overflow-hidden shadow-lg">
+                    <div className="px-5 py-4 border-b border-slate-800/80 flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4" style={{ color: branding.accentColor }} />
+                      <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                        Identidade Visual da Marca
+                      </span>
+                    </div>
+
+                    <div className="p-5 space-y-5">
+                      {/* Nome do Aplicativo */}
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
+                          <Type className="w-3.5 h-3.5" />
+                          Nome do Aplicativo
+                        </label>
+                        <input
+                          type="text"
+                          value={branding.appName}
+                          onChange={e => setBranding(prev => ({ ...prev, appName: e.target.value.slice(0, 30) }))}
+                          maxLength={30}
+                          placeholder="RPR TV"
+                          className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-sm font-bold text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                        />
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 font-mono">
+                          <span>Exibido no topo, na tela de login e no título da aba</span>
+                          <span>{branding.appName.length}/30 caracteres</span>
                         </div>
-                        <p className="text-[10px] text-slate-500">
-                          PNG, JPG, WebP ou SVG • Máximo 400KB
+                      </div>
+
+                      {/* Cor Principal */}
+                      <div>
+                        <label className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <PaletteIcon className="w-3.5 h-3.5" />
+                            <span>Cor Principal de Destaque</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {branding.accentColor}
+                          </span>
+                        </label>
+
+                        {/* Paleta rápida de botões */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {COLOR_PRESETS.map(c => (
+                            <button
+                              key={c.value}
+                              type="button"
+                              onClick={() => setBranding(prev => ({ ...prev, accentColor: c.value }))}
+                              className={`w-10 h-10 rounded-xl border-2 transition relative ${
+                                branding.accentColor.toLowerCase() === c.value.toLowerCase()
+                                  ? 'scale-110 shadow-lg'
+                                  : 'hover:scale-105 opacity-80 hover:opacity-100'
+                              }`}
+                              style={{
+                                background: c.value,
+                                borderColor: branding.accentColor.toLowerCase() === c.value.toLowerCase() ? '#fff' : 'transparent',
+                              }}
+                              title={c.name}
+                            >
+                              {branding.accentColor.toLowerCase() === c.value.toLowerCase() && (
+                                <Check className="w-5 h-5 text-white mx-auto drop-shadow-md" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Seletor Customizado Hex */}
+                        <div className="flex items-center gap-2 bg-[#12131e] p-2 rounded-xl border border-slate-800">
+                          <input
+                            type="color"
+                            value={branding.accentColor}
+                            onChange={e => setBranding(prev => ({ ...prev, accentColor: e.target.value }))}
+                            className="w-10 h-10 rounded-lg bg-transparent border border-slate-700/80 cursor-pointer shrink-0"
+                            title="Escolher cor personalizada"
+                          />
+                          <div className="flex-1">
+                            <input
+                              type="text"
+                              value={branding.accentColor}
+                              onChange={e => {
+                                const v = e.target.value;
+                                if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setBranding(prev => ({ ...prev, accentColor: v }));
+                              }}
+                              maxLength={7}
+                              placeholder="#dc2626"
+                              className="w-full bg-[#15151f] border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-white focus:outline-none"
+                            />
+                          </div>
+                          <span className="text-[10px] text-slate-500 pr-2">Hexadecimal</span>
+                        </div>
+                      </div>
+
+                      {/* Logotipo do App */}
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
+                          <ImageIcon className="w-3.5 h-3.5" />
+                          Logotipo da Sua Marca
+                        </label>
+                        <div className="flex items-center gap-4 bg-[#12131e] p-3.5 rounded-2xl border border-slate-800">
+                          <div
+                            className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 overflow-hidden shrink-0 shadow-md"
+                            style={{
+                              background: hexWithAlpha(branding.accentColor, 0.15),
+                              borderColor: hexWithAlpha(branding.accentColor, 0.4),
+                            }}
+                          >
+                            {branding.logoUrl ? (
+                              <img src={branding.logoUrl} alt="logo" className="w-full h-full object-contain p-1" />
+                            ) : (
+                              <Tv className="w-8 h-8 text-slate-500" />
+                            )}
+                          </div>
+                          <div className="flex-1 space-y-2">
+                            <input
+                              ref={logoInputRef}
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              onChange={handleLogoUpload}
+                              className="hidden"
+                            />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => logoInputRef.current?.click()}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+                              >
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Escolher Arquivo</span>
+                              </button>
+                              {branding.logoUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => setBranding(prev => ({ ...prev, logoUrl: '' }))}
+                                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/50 transition cursor-pointer"
+                                >
+                                  Remover Logo
+                                </button>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-500 leading-relaxed">
+                              💡 <strong>Recomendado:</strong> PNG transparente ou SVG, dimensões quadradas ou horizontais limpas. Máximo 400KB.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Texto do Rodapé */}
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
+                          <Type className="w-3.5 h-3.5" />
+                          Texto do Rodapé & Suporte
+                        </label>
+                        <input
+                          type="text"
+                          value={branding.footerText}
+                          onChange={e => setBranding(prev => ({ ...prev, footerText: e.target.value.slice(0, 80) }))}
+                          maxLength={80}
+                          placeholder="Transmissão HD • Suporte WhatsApp: (11) 99999-9999"
+                          className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                        />
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 font-mono">
+                          <span>Exibido na tela de login e no menu de configurações dos clientes</span>
+                          <span>{branding.footerText.length}/80 caracteres</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Estilo de Fundo do App (Background Style) */}
+                  <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl overflow-hidden shadow-lg">
+                    <div className="px-5 py-4 border-b border-slate-800/80 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Moon className="w-4 h-4 text-indigo-400" />
+                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                          Estilo do Fundo (Background)
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono uppercase">
+                        {branding.backgroundStyle || 'default'}
+                      </span>
+                    </div>
+
+                    <div className="p-4 sm:p-5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {BACKGROUND_OPTIONS.map((opt) => {
+                          const isSelected = (branding.backgroundStyle || 'default') === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setBranding(prev => ({ ...prev, backgroundStyle: opt.id }))}
+                              className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                                isSelected
+                                  ? 'bg-[#181928] border-white/60 shadow-md ring-1 ring-white/40'
+                                  : 'bg-[#12131e] border-slate-800/90 hover:border-slate-700 hover:bg-[#151624]'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-base">{opt.icon}</span>
+                                  <span className="text-xs font-bold text-white">
+                                    {opt.name}
+                                  </span>
+                                </div>
+                                {isSelected && (
+                                  <div
+                                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                                    style={{ background: branding.accentColor }}
+                                  >
+                                    <Check className="w-3 h-3 text-white" />
+                                  </div>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-400 leading-relaxed">
+                                {opt.desc}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Sincronização de Favicon e Título do Navegador */}
+                  <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl p-4 sm:p-5 shadow-lg flex items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-950/40 border border-blue-800/50 flex items-center justify-center shrink-0 mt-0.5">
+                        <Globe className="w-5 h-5 text-blue-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">
+                          Sincronizar Favicon e Título na Aba do Navegador
+                        </h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                          Atualiza o ícone e o título da aba do navegador com o logo e nome configurados da sua marca.
                         </p>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setBranding(prev => ({ ...prev, faviconSync: !(prev.faviconSync ?? true) }))}
+                      className={`w-12 h-6 rounded-full p-0.5 transition cursor-pointer shrink-0 border ${
+                        (branding.faviconSync ?? true)
+                          ? 'bg-emerald-600 border-emerald-500'
+                          : 'bg-slate-800 border-slate-700'
+                      }`}
+                    >
+                      <div
+                        className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                          (branding.faviconSync ?? true) ? 'translate-x-6' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
                   </div>
 
-                  <div>
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
-                      <Type className="w-3.5 h-3.5" />
-                      Texto do Rodapé
-                    </label>
-                    <input
-                      type="text"
-                      value={branding.footerText}
-                      onChange={e => setBranding(prev => ({ ...prev, footerText: e.target.value.slice(0, 80) }))}
-                      maxLength={80}
-                      placeholder="Transmissão HD • Canais ao Vivo"
-                      className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1 font-mono">{branding.footerText.length}/80 caracteres</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-[#0f0f17] border border-slate-800/60 rounded-2xl overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-800/60 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                    Botões da Barra Inferior
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    {clientTabs.filter(t => t.visible).length} de {clientTabs.length} visíveis
-                  </span>
-                </div>
-
-                <div className="divide-y divide-slate-800/60">
-                  {clientTabs.map((tab, idx) => {
-                    const isFirst = idx === 0;
-                    const isLast = idx === clientTabs.length - 1;
-                    const isFixed = tab.id === 'live' || tab.id === 'settings';
-
-                    return (
-                      <div key={tab.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleMoveTab(tab.id, 'up')}
-                            disabled={isFirst}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                          >
-                            ▲
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleMoveTab(tab.id, 'down')}
-                            disabled={isLast}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                          >
-                            ▼
-                          </button>
-                          <GripVertical className="w-4 h-4 text-slate-600 hidden sm:block" />
-                        </div>
-
-                        <div
-                          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border"
-                          style={tab.visible ? { background: `${branding.accentColor}25`, borderColor: `${branding.accentColor}60`, color: branding.accentColor } : { background: '#1a1a24', borderColor: '#334155', color: '#64748b' }}
-                        >
-                          {tab.id === 'movies' && <Tv className="w-5 h-5" />}
-                          {tab.id === 'series' && <Play className="w-5 h-5" />}
-                          {tab.id === 'live' && <Play className="w-5 h-5" />}
-                          {tab.id === 'settings' && <SettingsIcon className="w-5 h-5" />}
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <label className="block text-[10px] text-slate-500 font-semibold uppercase tracking-wide mb-1">
-                            Nome do botão
-                          </label>
-                          <input
-                            type="text"
-                            value={tab.label}
-                            onChange={(e) => handleRenameTab(tab.id, e.target.value.toUpperCase())}
-                            maxLength={20}
-                            disabled={isFixed}
-                            placeholder="NOME"
-                            className={`w-full bg-[#15151f] border rounded-xl px-3 py-2 text-sm font-bold text-white placeholder-slate-500 focus:outline-none ${
-                              isFixed ? 'border-slate-800 opacity-60 cursor-not-allowed' : 'border-slate-700/80'
-                            }`}
-                          />
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              {tab.id} • {tab.label.length}/20
-                            </span>
-                            {isFixed && (
-                              <span className="text-[10px] text-amber-400 font-semibold">
-                                Fixo
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => !isFixed && handleToggleTabVisible(tab.id)}
-                          disabled={isFixed}
-                          className={`shrink-0 px-3 py-2 rounded-xl font-bold text-[11px] uppercase transition border ${
-                            isFixed
-                              ? 'bg-slate-800/40 text-slate-500 border-slate-800 cursor-not-allowed'
-                              : tab.visible
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                              : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
-                          }`}
-                        >
-                          {tab.visible ? 'Visível' : 'Oculto'}
-                        </button>
+                  {/* 5. Botões da Barra Inferior (Customização) */}
+                  <div className="bg-[#0f0f17] border border-slate-800/80 rounded-2xl overflow-hidden shadow-lg">
+                    <div className="px-5 py-4 border-b border-slate-800/80 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sliders className="w-4 h-4" style={{ color: branding.accentColor }} />
+                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                          Botões da Barra Inferior
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {clientTabs.filter(t => t.visible).length} de {clientTabs.length} visíveis
+                      </span>
+                    </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-[#0f0f17] border border-slate-800/60">
-                <button
-                  type="button"
-                  onClick={handleResetAppearance}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
-                >
-                  Restaurar Padrão
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveAppearance}
-                  disabled={savingAppearance}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white shadow-lg flex items-center gap-2 disabled:opacity-50 transition"
-                  style={{ background: `linear-gradient(135deg, ${branding.accentColor}, ${branding.accentColor}cc)` }}
-                >
-                  {savingAppearance ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {savingAppearance ? 'Salvando...' : 'Salvar Alterações'}
-                </button>
+                    <div className="divide-y divide-slate-800/60">
+                      {clientTabs.map((tab, idx) => {
+                        const isFirst = idx === 0;
+                        const isLast = idx === clientTabs.length - 1;
+                        const isFixed = tab.id === 'live' || tab.id === 'settings';
+
+                        return (
+                          <div key={tab.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleMoveTab(tab.id, 'up')}
+                                disabled={isFirst}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveTab(tab.id, 'down')}
+                                disabled={isLast}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                ▼
+                              </button>
+                              <GripVertical className="w-4 h-4 text-slate-600 hidden sm:block" />
+                            </div>
+
+                            <div
+                              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border"
+                              style={
+                                tab.visible
+                                  ? {
+                                      background: hexWithAlpha(branding.accentColor, 0.2),
+                                      borderColor: hexWithAlpha(branding.accentColor, 0.5),
+                                      color: branding.accentColor,
+                                    }
+                                  : { background: '#1a1a24', borderColor: '#334155', color: '#64748b' }
+                              }
+                            >
+                              {tab.id === 'movies' && <Tv className="w-5 h-5" />}
+                              {tab.id === 'series' && <Play className="w-5 h-5" />}
+                              {tab.id === 'live' && <Play className="w-5 h-5" />}
+                              {tab.id === 'settings' && <SettingsIcon className="w-5 h-5" />}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <label className="block text-[10px] text-slate-500 font-semibold uppercase tracking-wide mb-1">
+                                Nome do botão
+                              </label>
+                              <input
+                                type="text"
+                                value={tab.label}
+                                onChange={(e) => handleRenameTab(tab.id, e.target.value.toUpperCase())}
+                                maxLength={20}
+                                disabled={isFixed}
+                                placeholder="NOME"
+                                className={`w-full bg-[#15151f] border rounded-xl px-3 py-2 text-sm font-bold text-white placeholder-slate-500 focus:outline-none ${
+                                  isFixed ? 'border-slate-800 opacity-60 cursor-not-allowed' : 'border-slate-700/80'
+                                }`}
+                              />
+                              <div className="flex items-center justify-between mt-1">
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {tab.id} • {tab.label.length}/20
+                                </span>
+                                {isFixed && (
+                                  <span className="text-[10px] text-amber-400 font-semibold">
+                                    Aba Essencial Fixa
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => !isFixed && handleToggleTabVisible(tab.id)}
+                              disabled={isFixed}
+                              className={`shrink-0 px-3 py-2 rounded-xl font-bold text-[11px] uppercase transition border cursor-pointer ${
+                                isFixed
+                                  ? 'bg-slate-800/40 text-slate-500 border-slate-800 cursor-not-allowed'
+                                  : tab.visible
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                              }`}
+                            >
+                              {tab.visible ? 'Visível' : 'Oculto'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Barra de Ações Inferior */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-[#0f0f17] border border-slate-800/80">
+                    <button
+                      type="button"
+                      onClick={handleResetAppearance}
+                      className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+                    >
+                      Restaurar Padrão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAppearance}
+                      disabled={savingAppearance}
+                      className="px-6 py-2.5 rounded-xl text-sm font-bold text-white shadow-xl flex items-center gap-2 disabled:opacity-50 transition cursor-pointer active:scale-95"
+                      style={{ background: `linear-gradient(135deg, ${branding.accentColor}, ${branding.accentColor}cc)` }}
+                    >
+                      {savingAppearance ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      <span>{savingAppearance ? 'Salvando...' : 'Salvar Alterações'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* COLUNA DIREITA: Simulador Interativo em Tempo Real (5 colunas no XL) */}
+                <div className="xl:col-span-5 space-y-4">
+                  <div className="xl:sticky xl:top-24 space-y-4">
+                    {/* Simulador Interativo */}
+                    <BrandingPreviewMockup
+                      branding={branding}
+                      clientTabs={clientTabs}
+                    />
+
+                    {/* Dicas Práticas de Customização */}
+                    <div className="p-4 rounded-2xl bg-[#0f0f17] border border-slate-800/80 text-xs text-slate-400 space-y-2.5 shadow-lg">
+                      <div className="flex items-center gap-2 text-white font-bold">
+                        <HelpCircle className="w-4 h-4 text-amber-400" />
+                        <span>Dicas para Personalização</span>
+                      </div>
+                      <ul className="space-y-2 text-[11px] leading-relaxed text-slate-300">
+                        <li className="flex items-start gap-1.5">
+                          <span className="text-amber-400 font-bold">•</span>
+                          <span><strong>Logos Transparentes:</strong> Dê preferência a imagens PNG com fundo vazado para harmonizar com qualquer tema.</span>
+                        </li>
+                        <li className="flex items-start gap-1.5">
+                          <span className="text-amber-400 font-bold">•</span>
+                          <span><strong>OLED Black:</strong> Fundo #000000 puro economiza energia e dá destaque cinematográfico em Smart TVs modernas.</span>
+                        </li>
+                        <li className="flex items-start gap-1.5">
+                          <span className="text-amber-400 font-bold">•</span>
+                          <span><strong>Rodapé WhatsApp:</strong> Insira seu canal de suporte no rodapé para que os clientes tirem dúvidas rapidamente.</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1433,6 +2391,217 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal de Teste Rápido Express */}
+      {isQuickTestOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f0f17] border border-slate-700/80 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div
+              className="absolute -top-16 -right-16 w-36 h-36 rounded-full opacity-20 pointer-events-none blur-2xl"
+              style={{ background: branding.accentColor }}
+            />
+
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg shrink-0"
+                  style={{ background: `linear-gradient(135deg, ${branding.accentColor}, #b91c1c)` }}
+                >
+                  <Zap className="w-5 h-5 fill-current" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Gerar Teste Grátis Express</h3>
+                  <p className="text-xs text-slate-400">Gera credenciais temporárias em 1 clique</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setIsQuickTestOpen(false); setQuickTestResult(null); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {!quickTestResult ? (
+              <div className="space-y-4 pt-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-2">Duração do Teste</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { hours: 2, label: '2 Horas', badge: 'Rápido' },
+                      { hours: 4, label: '4 Horas', badge: 'Padrão' },
+                      { hours: 24, label: '24 Horas', badge: '1 Dia' },
+                    ].map(opt => (
+                      <button
+                        key={opt.hours}
+                        type="button"
+                        onClick={() => setQuickTestDuration(opt.hours)}
+                        className={`p-3 rounded-xl border text-center transition flex flex-col items-center justify-center gap-1 ${
+                          quickTestDuration === opt.hours
+                            ? 'bg-slate-800 text-white shadow-md'
+                            : 'bg-[#15151f] border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                        style={quickTestDuration === opt.hours ? { borderColor: branding.accentColor } : {}}
+                      >
+                        <span className="text-xs font-bold">{opt.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/80 font-mono opacity-80">
+                          {opt.badge}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">
+                    Nome ou Identificação do Cliente (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={quickTestName}
+                    onChange={e => setQuickTestName(e.target.value)}
+                    placeholder="Ex: João Silva ou Teste Smart TV"
+                    className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickTestOpen(false)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateQuickTest}
+                    disabled={isGeneratingTest}
+                    className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg flex items-center gap-2 transition disabled:opacity-50"
+                    style={{ background: `linear-gradient(135deg, ${branding.accentColor}, #b91c1c)` }}
+                  >
+                    {isGeneratingTest ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Gerando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 fill-current" />
+                        <span>Gerar Acesso Agora</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-4">
+                <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 flex items-center gap-3">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+                  <div>
+                    <h4 className="text-xs font-bold text-emerald-300">Teste Gerado com Sucesso!</h4>
+                    <p className="text-[11px] text-emerald-400/80">
+                      Válido por {quickTestResult.hours} horas a partir de agora.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Caixa de dados do teste */}
+                <div className="bg-[#15151f] border border-slate-700/80 rounded-xl p-4 space-y-2.5 font-mono text-xs">
+                  <div className="flex items-center justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400 font-sans text-[11px]">Usuário:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-bold">{quickTestResult.username}</span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(quickTestResult.username, 'Usuário copiado!')}
+                        className="p-1 hover:text-white text-slate-400"
+                        title="Copiar usuário"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400 font-sans text-[11px]">Senha:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-bold">{quickTestResult.password}</span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(quickTestResult.password, 'Senha copiada!')}
+                        className="p-1 hover:text-white text-slate-400"
+                        title="Copiar senha"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-slate-400 font-sans text-[11px]">Web Player:</span>
+                    <span className="text-blue-400 truncate max-w-[200px]">{window.location.origin}</span>
+                  </div>
+                </div>
+
+                {copiedFeedback && (
+                  <div className="p-2 rounded-lg bg-emerald-950/50 border border-emerald-500/40 text-center text-xs font-bold text-emerald-400">
+                    ✓ {copiedFeedback}
+                  </div>
+                )}
+
+                {/* Ações de envio */}
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const msg = `Olá! Segue seu teste gratuito no *${branding.appName}*:\n\n👤 *Usuário:* ${quickTestResult.username}\n🔑 *Senha:* ${quickTestResult.password}\n⏱️ *Duração:* ${quickTestResult.hours} horas\n🌐 *Acesso:* ${window.location.origin}\n\nBom teste! Qualquer dúvida, estamos por aqui! 📺`;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Enviar Dados no WhatsApp</span>
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const msg = `Dados do seu teste no ${branding.appName}:\nUsuário: ${quickTestResult.username}\nSenha: ${quickTestResult.password}\nDuração: ${quickTestResult.hours}h\nLink: ${window.location.origin}`;
+                        copyToClipboard(msg, 'Dados copiados para a área de transferência!');
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Tudo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setQuickTestResult(null); setQuickTestName(''); }}
+                      className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Novo Teste</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => { setIsQuickTestOpen(false); setQuickTestResult(null); setQuickTestName(''); }}
+                    className="text-xs text-slate-400 hover:text-white"
+                  >
+                    Fechar Janela
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
