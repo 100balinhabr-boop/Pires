@@ -423,7 +423,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
   const [editPassword, setEditPassword] = useState('');
   const [editShowPassword, setEditShowPassword] = useState(false);
   const [editIsBlocked, setEditIsBlocked] = useState(false);
+  const [editPlaylistUrl, setEditPlaylistUrl] = useState('');
+  const [editPlaylistName, setEditPlaylistName] = useState('');
+  const [isTestingEditPlaylist, setIsTestingEditPlaylist] = useState(false);
+  const [testEditPlaylistResult, setTestEditPlaylistResult] = useState<{ success: boolean; message: string; count?: number } | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Modal exclusivo para Alterar / Gerenciar Lista M3U do Cliente
+  const [playlistModalUser, setPlaylistModalUser] = useState<UserAccount | null>(null);
+  const [targetPlaylistUrl, setTargetPlaylistUrl] = useState('');
+  const [targetPlaylistName, setTargetPlaylistName] = useState('');
+  const [isTestingPlaylist, setIsTestingPlaylist] = useState(false);
+  const [testPlaylistResult, setTestPlaylistResult] = useState<{ success: boolean; message: string; count?: number } | null>(null);
+  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
 
   const getAuthToken = () => localStorage.getItem('iptv_auth_token') || sessionStorage.getItem('iptv_auth_token') || '';
 
@@ -634,6 +646,138 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
     }
   };
 
+  const handleOpenPlaylistModal = (user: UserAccount) => {
+    setPlaylistModalUser(user);
+    setTargetPlaylistUrl(user.playlistUrl || '');
+    setTargetPlaylistName(user.playlistName || (user.playlistUrl ? 'Lista IPTV' : ''));
+    setTestPlaylistResult(null);
+    setIsTestingPlaylist(false);
+  };
+
+  const handleTestPlaylistUrl = async (urlToTest: string, isEditModal: boolean = false) => {
+    const clean = urlToTest.trim();
+    if (!clean) {
+      const errObj = { success: false, message: 'Digite ou cole uma URL M3U antes de testar.' };
+      if (isEditModal) setTestEditPlaylistResult(errObj);
+      else setTestPlaylistResult(errObj);
+      return;
+    }
+    if (isEditModal) {
+      setIsTestingEditPlaylist(true);
+      setTestEditPlaylistResult(null);
+    } else {
+      setIsTestingPlaylist(true);
+      setTestPlaylistResult(null);
+    }
+
+    try {
+      const res = await fetch('/api/load-playlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: clean, maxChannels: 100, mode: 'all' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.channels) && data.channels.length > 0) {
+        const count = data.count || data.channels.length;
+        const okObj = {
+          success: true,
+          count,
+          message: `Lista válida e online! ${count} canais/mídias detectados com sucesso.`,
+        };
+        if (isEditModal) {
+          setTestEditPlaylistResult(okObj);
+          if (!editPlaylistName.trim()) setEditPlaylistName('Lista IPTV');
+        } else {
+          setTestPlaylistResult(okObj);
+          if (!targetPlaylistName.trim()) setTargetPlaylistName('Lista IPTV');
+        }
+      } else {
+        const errObj = {
+          success: false,
+          message: data.error || 'Nenhum canal pôde ser lido desta lista M3U.',
+        };
+        if (isEditModal) setTestEditPlaylistResult(errObj);
+        else setTestPlaylistResult(errObj);
+      }
+    } catch (err: any) {
+      const errObj = {
+        success: false,
+        message: `Falha de conexão: ${err.message || 'Erro ao carregar lista.'}`,
+      };
+      if (isEditModal) setTestEditPlaylistResult(errObj);
+      else setTestPlaylistResult(errObj);
+    } finally {
+      if (isEditModal) setIsTestingEditPlaylist(false);
+      else setIsTestingPlaylist(false);
+    }
+  };
+
+  const handleSaveClientPlaylist = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!playlistModalUser) return;
+
+    setIsSavingPlaylist(true);
+    setFeedbackMsg(null);
+    try {
+      const cleanUrl = targetPlaylistUrl.trim();
+      const cleanName = targetPlaylistName.trim() || (cleanUrl ? 'Lista IPTV' : '');
+
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(playlistModalUser.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          playlistUrl: cleanUrl,
+          playlistName: cleanName,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.users) {
+        setUsers(data.users);
+        setFeedbackMsg({
+          type: 'success',
+          text: cleanUrl
+            ? `Lista M3U de @${playlistModalUser.username} atualizada com sucesso!`
+            : `Lista M3U de @${playlistModalUser.username} desvinculada.`,
+        });
+        setPlaylistModalUser(null);
+      } else {
+        setFeedbackMsg({ type: 'error', text: data.error || 'Erro ao salvar lista M3U.' });
+      }
+    } catch {
+      setFeedbackMsg({ type: 'error', text: 'Falha de comunicação ao salvar lista M3U.' });
+    } finally {
+      setIsSavingPlaylist(false);
+    }
+  };
+
+  const handleRemoveClientPlaylist = async () => {
+    if (!playlistModalUser) return;
+    setIsSavingPlaylist(true);
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(playlistModalUser.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          playlistUrl: '',
+          playlistName: '',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.users) {
+        setUsers(data.users);
+        setFeedbackMsg({ type: 'success', text: `Lista M3U desvinculada de @${playlistModalUser.username}!` });
+        setPlaylistModalUser(null);
+      } else {
+        setFeedbackMsg({ type: 'error', text: data.error || 'Erro ao desvincular lista.' });
+      }
+    } catch {
+      setFeedbackMsg({ type: 'error', text: 'Erro ao desvincular lista.' });
+    } finally {
+      setIsSavingPlaylist(false);
+    }
+  };
+
   const handleOpenEdit = (user: UserAccount) => {
     setEditingUser(user);
     setEditName(user.name || '');
@@ -644,6 +788,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
     setEditIsBlocked(!!user.isBlocked);
     setEditPassword('');
     setEditShowPassword(false);
+    setEditPlaylistUrl(user.playlistUrl || '');
+    setEditPlaylistName(user.playlistName || '');
+    setTestEditPlaylistResult(null);
+    setIsTestingEditPlaylist(false);
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -666,6 +814,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
           expirationDate: editExpirationDate || 'vitalicio',
           password: editPassword.trim() || undefined,
           isBlocked: editIsBlocked,
+          playlistUrl: editPlaylistUrl.trim(),
+          playlistName: editPlaylistName.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -1309,6 +1459,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
                                 title="Copiar mensagem amigável de cobrança"
                               >
                                 <Copy className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Botão Alterar Lista M3U */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPlaylistModal(user)}
+                                className="p-2 rounded-lg text-xs bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/40 transition cursor-pointer"
+                                title="Alterar ou testar Lista M3U do cliente"
+                              >
+                                <Tv className="w-3.5 h-3.5" />
                               </button>
 
                               {/* Botão Renovar 30d */}
@@ -2267,6 +2427,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
                                     Direto
                                   </span>
                                 )}
+
+                                {/* Badge Lista M3U do Cliente */}
+                                {user.playlistUrl ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenPlaylistModal(user)}
+                                    className="px-2.5 py-0.5 rounded-full bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold flex items-center gap-1.5 transition cursor-pointer max-w-[200px]"
+                                    title={`Lista M3U: ${user.playlistName || user.playlistUrl}\nClique para alterar ou testar a lista.`}
+                                  >
+                                    <Tv className="w-3 h-3 text-cyan-400 shrink-0" />
+                                    <span className="truncate">{user.playlistName || 'Lista Vinculada'}</span>
+                                  </button>
+                                ) : role === 'UsuarioComum' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenPlaylistModal(user)}
+                                    className="px-2 py-0.5 rounded-full bg-slate-800/80 hover:bg-cyan-950/40 text-slate-400 hover:text-cyan-300 border border-slate-700/80 hover:border-cyan-500/40 text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                                    title="Nenhuma lista vinculada. Clique para vincular a lista M3U deste cliente."
+                                  >
+                                    <Tv className="w-2.5 h-2.5 text-slate-500 shrink-0" />
+                                    <span>+ Vincular M3U</span>
+                                  </button>
+                                ) : null}
                               </div>
                               <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
                                 {user.email && <span className="truncate">{user.email}</span>}
@@ -2287,6 +2470,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
                             ) : (
                               <>
                                 {canRenew && <button type="button" onClick={() => handleQuickRenew(user, 30)} disabled={isRunning} className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"><CalendarPlus className="w-3.5 h-3.5" /><span>+30d</span></button>}
+                                {canEdit && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenPlaylistModal(user)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition cursor-pointer active:scale-95 shadow-xs"
+                                    title="Alterar ou gerenciar a lista M3U deste cliente"
+                                  >
+                                    <Tv className="w-3.5 h-3.5 text-cyan-400" />
+                                    <span>Lista M3U</span>
+                                  </button>
+                                )}
                                 {canEdit && <button type="button" onClick={() => handleOpenEdit(user)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40"><Pencil className="w-3.5 h-3.5" /><span>Editar</span></button>}
                                 {canBlock && <button type="button" onClick={() => handleToggleBlock(user)} disabled={isRunning} className={`p-2 rounded-xl border ${user.isBlocked ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40' : 'bg-rose-600/20 text-rose-300 border-rose-500/40'}`}>{isRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : user.isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}</button>}
                                 {canDelete && <button type="button" onClick={() => setPendingDeleteId(user.id)} disabled={isRunning} className="p-2 rounded-xl bg-slate-800 hover:bg-rose-900/30 text-slate-400 hover:text-rose-400 border border-slate-700/80"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -2376,6 +2570,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
                 </div>
               </div>
 
+              {/* Seção da Lista M3U do Cliente no Modal Editar */}
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-cyan-500/40 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                    <Tv className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Lista M3U do Cliente</span>
+                  </label>
+                  {editPlaylistUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditPlaylistUrl('');
+                        setEditPlaylistName('');
+                        setTestEditPlaylistResult(null);
+                      }}
+                      className="text-[10px] text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+                    >
+                      Desvincular Lista
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editPlaylistName}
+                    onChange={e => setEditPlaylistName(e.target.value)}
+                    placeholder="Nome da Lista (ex: Canais HD & Filmes)"
+                    className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="url"
+                      value={editPlaylistUrl}
+                      onChange={e => {
+                        setEditPlaylistUrl(e.target.value);
+                        setTestEditPlaylistResult(null);
+                      }}
+                      placeholder="https://servidor.com/get.php?username=...&password=..."
+                      className="flex-1 bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={isTestingEditPlaylist || !editPlaylistUrl.trim()}
+                      onClick={() => handleTestPlaylistUrl(editPlaylistUrl, true)}
+                      className="px-2.5 py-1.5 rounded-xl bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/40 text-[11px] font-bold flex items-center gap-1 disabled:opacity-40 cursor-pointer"
+                      title="Testar conexão da lista agora"
+                    >
+                      {isTestingEditPlaylist ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                      <span>Testar</span>
+                    </button>
+                  </div>
+
+                  {testEditPlaylistResult && (
+                    <div className={`p-2 rounded-lg text-[11px] flex items-center gap-1.5 border ${
+                      testEditPlaylistResult.success
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                        : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                    }`}>
+                      {testEditPlaylistResult.success ? <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />}
+                      <span className="truncate">{testEditPlaylistResult.message}</span>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-slate-400">
+                    O cliente carrega automaticamente esta lista ao fazer login.
+                  </p>
+                </div>
+              </div>
+
               {editingUser.id !== currentAdmin.id && (
                 <button type="button" onClick={() => setEditIsBlocked(!editIsBlocked)} className={`w-full flex items-center justify-between p-3 rounded-xl border text-sm font-semibold ${editIsBlocked ? 'bg-rose-950/30 border-rose-500/50 text-rose-300' : 'bg-emerald-950/30 border-emerald-500/50 text-emerald-300'}`}>
                   <span>{editIsBlocked ? 'Bloqueada' : 'Ativa'}</span>
@@ -2391,6 +2655,188 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentAdmin, onClose, o
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal Dedicado para Alterar / Gerenciar Lista M3U do Cliente */}
+      {playlistModalUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-[#0f0f17] border border-cyan-500/50 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 bg-gradient-to-r from-cyan-950/50 via-[#101524] to-[#0f0f17] border-b border-cyan-900/50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-lg shadow-cyan-500/10">
+                  <Tv className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Alterar Lista M3U do Cliente</span>
+                  </h4>
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                    <span className="font-semibold text-slate-200">{playlistModalUser.name}</span>
+                    <span className="font-mono text-cyan-400">(@{playlistModalUser.username})</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlaylistModalUser(null)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveClientPlaylist} className="p-5 space-y-4">
+              {/* Status Atual da Lista */}
+              <div className="p-3 rounded-xl bg-[#141422] border border-slate-800 flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Status atual:</span>
+                  {playlistModalUser.playlistUrl ? (
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      <Check className="w-3.5 h-3.5" /> Lista Vinculada
+                    </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-amber-400 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
+                      <AlertTriangle className="w-3.5 h-3.5" /> Nenhuma lista vinculada
+                    </span>
+                  )}
+                </div>
+                {playlistModalUser.playlistUpdatedAt && (
+                  <span className="text-[10px] text-slate-500">
+                    Atualizado em {new Date(playlistModalUser.playlistUpdatedAt).toLocaleDateString('pt-BR')}
+                  </span>
+                )}
+              </div>
+
+              {/* Nome de Identificação da Lista */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Nome da Lista
+                </label>
+                <input
+                  type="text"
+                  value={targetPlaylistName}
+                  onChange={(e) => setTargetPlaylistName(e.target.value)}
+                  placeholder="Ex: Canais HD + Filmes 4K ou Lista do Cliente"
+                  className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              {/* URL da Lista M3U / Xtream */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span>URL da Lista M3U / Xtream Codes</span>
+                  </label>
+                  {targetPlaylistUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTargetPlaylistUrl('');
+                        setTestPlaylistResult(null);
+                      }}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+                    >
+                      Limpar link
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  rows={3}
+                  value={targetPlaylistUrl}
+                  onChange={(e) => {
+                    setTargetPlaylistUrl(e.target.value);
+                    setTestPlaylistResult(null);
+                  }}
+                  placeholder="https://servidor.com/get.php?username=cliente&password=senha&type=m3u_plus&output=m3u8"
+                  className="w-full bg-[#15151f] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none leading-relaxed"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Formatos aceitos: URLs M3U / M3U8 diretas ou links da API Xtream Codes (get.php).
+                </p>
+              </div>
+
+              {/* Botão de Testar Lista em Tempo Real */}
+              <div>
+                <button
+                  type="button"
+                  disabled={isTestingPlaylist || !targetPlaylistUrl.trim()}
+                  onClick={() => handleTestPlaylistUrl(targetPlaylistUrl, false)}
+                  className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold text-cyan-300 border border-cyan-500/30 flex items-center justify-center gap-2 transition cursor-pointer active:scale-98"
+                >
+                  {isTestingPlaylist ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                      <span>Testando e lendo canais da lista...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Testar Lista Agora (Verificar Online)</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Resultado do Teste */}
+                {testPlaylistResult && (
+                  <div
+                    className={`mt-2 p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                      testPlaylistResult.success
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                        : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                    }`}
+                  >
+                    {testPlaylistResult.success ? (
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <span className="font-semibold">{testPlaylistResult.message}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Rodapé / Ações */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800 flex-wrap gap-2">
+                <div>
+                  {playlistModalUser.playlistUrl ? (
+                    <button
+                      type="button"
+                      onClick={handleRemoveClientPlaylist}
+                      disabled={isSavingPlaylist}
+                      className="px-3 py-1.5 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 border border-rose-800/50 text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                    >
+                      Desvincular Lista
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-slate-500">A lista é salva no servidor</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPlaylistModalUser(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-medium transition cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingPlaylist}
+                    className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs text-white font-bold flex items-center gap-1.5 shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 active:scale-95"
+                  >
+                    {isSavingPlaylist ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5" />
+                    )}
+                    <span>Salvar Lista M3U</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
