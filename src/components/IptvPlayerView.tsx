@@ -107,6 +107,19 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
   const controlsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // === Proximo episodio ===
+  const [nextEp, setNextEp] = useState<Channel | null>(null);
+  const [showNextOverlay, setShowNextOverlay] = useState<boolean>(false);
+  const [nextCountdown, setNextCountdown] = useState<number>(10);
+  const [nextIsNewSeason, setNextIsNewSeason] = useState<boolean>(false);
+  const nextTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const dismissedRef = useRef<string | null>(null);
+
+  // === Seek / progresso ===
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const seekBarRef = useRef<HTMLDivElement>(null);
+
   // Auto-select first channel on mount or channel list update
   useEffect(() => {
     if (!activeChannel && channels.length > 0) {
@@ -482,6 +495,120 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
     if (typeof index === 'number') setFocusedIndex(index);
   };
 
+  // === Helpers de proximo episodio ===
+  const parseEpisode = (name: string): { base: string; season: number; episode: number } | null => {
+    let m = name.match(/^(.*?)[\s\-_.]*[Ss](\d{1,2})[\s\-_.]*[Ee](\d{1,3})/);
+    if (m) return { base: m[1].trim(), season: parseInt(m[2], 10), episode: parseInt(m[3], 10) };
+    m = name.match(/^(.*?)[\s\-_.]*[Tt](?:emporada)?[\s\-_.]*(\d{1,2})[\s\-_.]*(?:[Ee]p(?:is[oó]dio)?)?[\s\-_.]*(\d{1,3})/);
+    if (m) return { base: m[1].trim(), season: parseInt(m[2], 10), episode: parseInt(m[3], 10) };
+    m = name.match(/^(.*?)[\s\-_.]*(\d{1,2})x(\d{1,3})/);
+    if (m) return { base: m[1].trim(), season: parseInt(m[2], 10), episode: parseInt(m[3], 10) };
+    return null;
+  };
+
+  const computeNextEpisode = (current: Channel): { next: Channel | null; newSeason: boolean } => {
+    const parsed = parseEpisode(current.name);
+    if (!parsed) {
+      const sameGroup = channels.filter((c) => c.groupTitle === current.groupTitle);
+      const idx = sameGroup.findIndex((c) => c.id === current.id);
+      if (idx >= 0 && idx < sameGroup.length - 1) {
+        return { next: sameGroup[idx + 1], newSeason: false };
+      }
+      return { next: null, newSeason: false };
+    }
+    const all = channels
+      .map((c) => ({ ch: c, p: parseEpisode(c.name) }))
+      .filter(({ p }) => p && p.base.toLowerCase() === parsed.base.toLowerCase())
+      .sort((a, b) => {
+        if (a.p!.season !== b.p!.season) return a.p!.season - b.p!.season;
+        return a.p!.episode - b.p!.episode;
+      });
+    const idx = all.findIndex(({ ch }) => ch.id === current.id);
+    if (idx < 0 || idx >= all.length - 1) return { next: null, newSeason: false };
+    const entry = all[idx + 1];
+    return { next: entry.ch, newSeason: entry.p!.season !== parsed.season };
+  };
+
+  // === Efeitos do proximo episodio ===
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onTime = () => {
+      if (!v.duration || !isFinite(v.duration)) return;
+      const remaining = v.duration - v.currentTime;
+      if (remaining > 60 || remaining <= 0) return;
+      if (!activeChannel) return;
+      if (dismissedRef.current === activeChannel.id) return;
+      if (showNextOverlay) return;
+      const { next, newSeason } = computeNextEpisode(activeChannel);
+      setNextEp(next);
+      setNextIsNewSeason(newSeason);
+      setShowNextOverlay(true);
+      setNextCountdown(10);
+    };
+    v.addEventListener('timeupdate', onTime);
+    return () => v.removeEventListener('timeupdate', onTime);
+  }, [activeChannel, channels, showNextOverlay]);
+
+  useEffect(() => {
+    if (!showNextOverlay || !nextEp) return;
+    if (nextCountdown <= 0) {
+      switchChannel(nextEp);
+      setShowNextOverlay(false);
+      setNextCountdown(10);
+      return;
+    }
+    const t = setTimeout(() => setNextCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [showNextOverlay, nextCountdown, nextEp]);
+
+  useEffect(() => {
+    setShowNextOverlay(false);
+    setNextCountdown(10);
+    dismissedRef.current = null;
+  }, [activeChannel?.id]);
+
+  // === Rastreia tempo do vídeo ===
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onTime = () => setCurrentTime(v.currentTime || 0);
+    const onMeta = () => setDuration(v.duration && isFinite(v.duration) ? v.duration : 0);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('durationchange', onMeta);
+    onMeta();
+    return () => {
+      v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('durationchange', onMeta);
+    };
+  }, [activeChannel?.id]);
+
+  const fmtTime = (secs: number): string => {
+    if (!secs || !isFinite(secs) || secs < 0) return '00:00';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  };
+
+  const handleSeekFromEvent = (clientX: number) => {
+    const bar = seekBarRef.current;
+    const v = videoRef.current;
+    if (!bar || !v || !duration) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    v.currentTime = ratio * duration;
+    setCurrentTime(ratio * duration);
+  };
+
+  const handleSeekDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1) return;
+    handleSeekFromEvent(e.clientX);
+  };
+
   const handleNextChannel = () => {
     if (!activeChannel || filteredChannels.length === 0) return;
     const curIdx = filteredChannels.findIndex((c) => c.id === activeChannel.id);
@@ -715,7 +842,150 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
               }}
             />
 
-            {/* Buffering Spinner */}
+                        {/* === Proximo episodio overlay === */}
+            <AnimatePresence>
+              {showNextOverlay && activeChannel && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 20 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-24 right-4 z-40 bg-slate-950/90 backdrop-blur-md border border-blue-500/40 rounded-2xl p-4 shadow-2xl max-w-xs"
+                >
+                  {nextEp ? (
+                    <>
+                      <div className="text-[10px] text-blue-400 font-semibold mb-1 tracking-wide">
+                        {nextIsNewSeason ? 'PROXIMA TEMPORADA' : 'PROXIMO EPISODIO'}
+                      </div>
+                      <div className="text-sm text-white font-medium mb-3 truncate">
+                        {nextEp.name}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            switchChannel(nextEp);
+                            setShowNextOverlay(false);
+                          }}
+                          className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition"
+                        >
+                          Assistir agora ({nextCountdown}s)
+                        </button>
+                        <button
+                          onClick={() => {
+                            dismissedRef.current = activeChannel.id;
+                            setShowNextOverlay(false);
+                          }}
+                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-[10px] text-blue-400 font-semibold mb-1 tracking-wide">
+                        FIM DA SERIE
+                      </div>
+                      <div className="text-sm text-white font-medium mb-3 truncate">
+                        {activeChannel.name}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const parsed = parseEpisode(activeChannel.name);
+                          if (parsed) {
+                            const first = channels
+                              .map((c) => ({ ch: c, p: parseEpisode(c.name) }))
+                              .filter(({ p }) => p && p.base.toLowerCase() === parsed.base.toLowerCase())
+                              .sort((a, b) => {
+                                if (a.p!.season !== b.p!.season) return a.p!.season - b.p!.season;
+                                return a.p!.episode - b.p!.episode;
+                              })[0];
+                            if (first) {
+                              switchChannel(first.ch);
+                              setShowNextOverlay(false);
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition"
+                      >
+                        Repetir serie
+                      </button>
+                      <button
+                        onClick={() => {
+                          dismissedRef.current = activeChannel.id;
+                          setShowNextOverlay(false);
+                        }}
+                        className="w-full mt-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition"
+                      >
+                        Fechar
+                      </button>
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* === Seek bar === */}
+            <div
+              className="absolute bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-8 bg-gradient-to-t from-black/85 to-transparent select-none"
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              style={{
+                opacity: controlsVisible ? 1 : 0,
+                transition: 'opacity 0.2s',
+                pointerEvents: controlsVisible ? 'auto' : 'none',
+              }}
+            >
+              <div
+                ref={seekBarRef}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  handleSeekFromEvent(e.clientX);
+                }}
+                onPointerMove={handleSeekDrag}
+                className="relative w-full h-2 bg-slate-700/60 rounded-full cursor-pointer group/seek"
+                style={{ touchAction: 'none' }}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 bg-blue-500 rounded-full pointer-events-none"
+                  style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-md pointer-events-none opacity-0 group-hover/seek:opacity-100 transition"
+                  style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 7px)` }}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-[11px] text-slate-200 font-mono tabular-nums">
+                  {fmtTime(currentTime)} / {fmtTime(duration)}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const v = videoRef.current;
+                      if (v) v.currentTime = Math.max(0, v.currentTime - 10);
+                    }}
+                    className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold rounded-md transition"
+                  >
+                    -10s
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const v = videoRef.current;
+                      if (v) v.currentTime = Math.min(duration || v.duration || 0, v.currentTime + 10);
+                    }}
+                    className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold rounded-md transition"
+                  >
+                    +10s
+                  </button>
+                </div>
+              </div>
+            </div>
+
+                        {/* Buffering Spinner */}
             <AnimatePresence>
               {isBuffering && !isReconnecting && (
                 <motion.div
