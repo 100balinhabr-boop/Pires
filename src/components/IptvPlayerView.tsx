@@ -536,7 +536,7 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
     const onTime = () => {
       if (!v.duration || !isFinite(v.duration)) return;
       const remaining = v.duration - v.currentTime;
-      if (remaining > 60 || remaining <= 0) return;
+      if (remaining > 40 || remaining <= 0) return;
       if (!activeChannel) return;
       if (dismissedRef.current === activeChannel.id) return;
       if (showNextOverlay) return;
@@ -841,6 +841,13 @@ export const IptvPlayerView: React.FC<IptvPlayerViewProps> = ({
                 }
               }}
             />
+
+            {/* === Tempo sempre visivel === */}
+            <div
+              className="absolute top-3 left-3 z-30 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-sm text-white text-[11px] font-mono tabular-nums select-none pointer-events-none"
+            >
+              {fmtTime(currentTime)} / {fmtTime(duration)}
+            </div>
 
                         {/* === Proximo episodio overlay === */}
             <AnimatePresence>
