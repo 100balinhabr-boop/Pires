@@ -1936,7 +1936,7 @@ export const AdminUsersModal: React.FC<AdminUsersModalProps> = ({
                       <Tv className="w-3.5 h-3.5 text-cyan-400" />
                       <span>Lista M3U Vinculada</span>
                     </label>
-                    {(true) && (
+                    {editPlaylistUrl && (
                       <button
                         type="button"
                         onClick={() => {
