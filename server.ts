@@ -10,8 +10,39 @@ import { createServer as createViteServer } from "vite";
 const app = express();
 const PORT = 3000;
 
+process.on("uncaughtException", (err) => {
+  console.error("[Server UncaughtException]", err?.message || err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[Server UnhandledRejection]", reason);
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Download direto do arquivo para exportação/edição no GitHub
+app.get("/download/server.ts", (_req, res) => {
+  const filePath = path.join(process.cwd(), "server.ts");
+  res.download(filePath, "server.ts");
+});
+
+app.get("/download/server.txt", (_req, res) => {
+  const filePath = path.join(process.cwd(), "server.ts");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.sendFile(filePath);
+});
+
+app.get("/download/AdminPanel.tsx", (_req, res) => {
+  const filePath = path.join(process.cwd(), "src/components/AdminPanel.tsx");
+  res.download(filePath, "AdminPanel.tsx");
+});
+
+app.get("/download/AdminPanel.txt", (_req, res) => {
+  const filePath = path.join(process.cwd(), "src/components/AdminPanel.tsx");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.sendFile(filePath);
+});
 
 // ----------------------------------------------------
 // Authentication & User Accounts Management
@@ -1272,8 +1303,13 @@ interface ChannelGroup {
 }
 
 function extractXtreamCredentials(urlStr: string) {
+  if (!urlStr || typeof urlStr !== "string") return null;
+  let normalized = urlStr.trim();
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = "http://" + normalized;
+  }
   try {
-    const parsed = new URL(urlStr);
+    const parsed = new URL(normalized);
     const username = parsed.searchParams.get("username");
     const password = parsed.searchParams.get("password");
     if (username && password) {
@@ -1529,10 +1565,23 @@ app.post("/api/xtream/categories", async (req, res) => {
       signal: AbortSignal.timeout(15000),
     });
 
-    if (!response.ok) return res.status(response.status).json({ success: false, error: `Status ${response.status}` });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      return res.status(response.status).json({ success: false, error: `Status ${response.status}: ${errText.slice(0, 100)}` });
+    }
 
-    const data = await response.json();
-    if (!Array.isArray(data)) return res.status(500).json({ success: false, error: "Resposta inesperada." });
+    const rawText = await response.text();
+    let data: any;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      return res.status(502).json({
+        success: false,
+        error: "Servidor IPTV retornou HTML em vez de JSON. Verifique se as credenciais ou o servidor Xtream estão ativos."
+      });
+    }
+
+    if (!Array.isArray(data)) return res.status(502).json({ success: false, error: "Resposta inesperada do servidor IPTV." });
 
     const categories = data.map((c: any) => ({
       id: String(c.category_id),
@@ -1570,10 +1619,23 @@ app.post("/api/xtream/streams", async (req, res) => {
         signal: AbortSignal.timeout(25000),
       });
 
-      if (!response.ok) return res.status(response.status).json({ success: false, error: `Status ${response.status}` });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        return res.status(response.status).json({ success: false, error: `Status ${response.status}: ${errText.slice(0, 100)}` });
+      }
 
-      const data = await response.json();
-      if (!Array.isArray(data)) return res.status(500).json({ success: false, error: "Formato inválido." });
+      const rawText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        return res.status(502).json({
+          success: false,
+          error: "Servidor IPTV retornou dados não-JSON. Verifique o status da conexão com a lista."
+        });
+      }
+
+      if (!Array.isArray(data)) return res.status(502).json({ success: false, error: "Formato de streams inválido." });
 
       streams = data;
       setInXtreamCache(cacheKey, streams);
@@ -1682,9 +1744,22 @@ app.post("/api/xtream/series-info", async (req, res) => {
       signal: AbortSignal.timeout(15000),
     });
 
-    if (!response.ok) return res.status(response.status).json({ success: false, error: `Status ${response.status}` });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      return res.status(response.status).json({ success: false, error: `Status ${response.status}: ${errText.slice(0, 100)}` });
+    }
 
-    const data = await response.json();
+    const rawText = await response.text();
+    let data: any;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      return res.status(502).json({
+        success: false,
+        error: "Servidor IPTV retornou página HTML em vez de informações da série. O servidor pode estar bloqueando a consulta ou fora do ar."
+      });
+    }
+
     setInXtreamCache(cacheKey, data);
     return res.json({ success: true, source: "network", data });
   } catch (err: any) {
@@ -1696,6 +1771,21 @@ app.get("/api/proxy-stream", async (req, res) => {
   const targetUrl = req.query.url as string;
   if (!targetUrl) return res.status(400).send("URL parameter missing");
 
+  const controller = new AbortController();
+  // Timeout apenas para conectar e receber headers iniciais (não mata o vídeo no meio do stream)
+  const connectTimeout = setTimeout(() => {
+    controller.abort(new Error("Connection timeout"));
+  }, 25000);
+
+  const cleanup = () => {
+    clearTimeout(connectTimeout);
+  };
+
+  req.on("close", () => {
+    cleanup();
+    controller.abort();
+  });
+
   try {
     const upstreamRes = await fetch(targetUrl, {
       method: "GET",
@@ -1704,8 +1794,11 @@ app.get("/api/proxy-stream", async (req, res) => {
         ...(req.headers.range ? { Range: req.headers.range as string } : {})
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(20000)
+      signal: controller.signal
     });
+
+    // Conexão estabelecida e headers recebidos com sucesso: cancela o timeout
+    cleanup();
 
     if (!upstreamRes.ok && upstreamRes.status !== 206) {
       return res.status(upstreamRes.status).send(`Upstream error: ${upstreamRes.statusText}`);
@@ -1769,13 +1862,37 @@ app.get("/api/proxy-stream", async (req, res) => {
 
     if (upstreamRes.body) {
       const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+      
+      // Capturar erros do stream para evitar 'unhandled error event on Readable instance'
+      nodeStream.on("error", (streamErr: any) => {
+        // Ignora erros normais de encerramento pelo cliente (Abort/Timeout/Premature close)
+        if (streamErr?.code !== "ERR_STREAM_PREMATURE_CLOSE" && streamErr?.name !== "TimeoutError") {
+          console.warn("[Proxy Stream Warning]", streamErr.message || streamErr);
+        }
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+
+      res.on("error", () => {
+        nodeStream.destroy();
+      });
+
+      req.on("close", () => {
+        nodeStream.destroy();
+      });
+
       nodeStream.pipe(res);
-      req.on("close", () => { nodeStream.destroy(); });
     } else {
       res.end();
     }
   } catch (err: any) {
-    console.error("[Proxy Stream Error]", err.message);
+    cleanup();
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      console.warn("[Proxy Stream Timeout/Abort]", targetUrl);
+    } else {
+      console.error("[Proxy Stream Error]", err.message);
+    }
     if (!res.headersSent) res.status(502).send(`Stream proxy error: ${err.message}`);
   }
 });

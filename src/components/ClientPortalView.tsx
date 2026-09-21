@@ -15,8 +15,8 @@ import {
   Star, Play, Pause, Volume2, VolumeX, Maximize2, Minimize2, X,
   Bookmark, Clock, Sparkles, Check, ShieldCheck, Calendar, LogOut,
   ExternalLink, Crown, AlertCircle, Code2, Folder, Loader2,
-  Sun, PictureInPicture2, Gauge, RefreshCw, SkipBack, Plus,
-  Download, Upload, FileJson, CheckCircle2
+  Sun, PictureInPicture2, Gauge, RefreshCw, SkipBack, SkipForward,
+  RotateCcw, RotateCw, List, Plus, Download, Upload, FileJson, CheckCircle2
 } from 'lucide-react';
 
 interface ClientPortalViewProps {
@@ -42,6 +42,20 @@ interface ClientTabConfig {
   visible: boolean;
 }
 
+interface SeriesPlaybackContext {
+  seriesTitle: string;
+  posterUrl?: string;
+  seasonNumber: number;
+  episodeIndex: number;
+  currentEpisode: any;
+  episodesList: any[];
+  nextEpisode: any | null;
+  prevEpisode: any | null;
+  allSeasons?: any[];
+  allEpisodes?: Record<string, any[]>;
+  seriesItem: any;
+}
+
 const DEFAULT_CLIENT_TABS: ClientTabConfig[] = [
   { id: 'movies', label: 'FILMES', visible: true },
   { id: 'series', label: 'SÉRIES', visible: true },
@@ -59,6 +73,24 @@ const DEFAULT_BRANDING: ClientBranding = {
 };
 
 type ClientTab = 'movies' | 'series' | 'live' | 'settings';
+
+async function parseResponseSafely<T = any>(res: Response): Promise<{ ok: boolean; data?: T; error?: string }> {
+  try {
+    const text = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, error: `Servidor retornou resposta em formato não-JSON (${res.status}).` };
+    }
+    if (!res.ok) {
+      return { ok: false, data: json, error: json?.error || `Erro HTTP ${res.status}` };
+    }
+    return { ok: true, data: json };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Falha ao processar resposta do servidor' };
+  }
+}
 
 function shuffleArray<T>(arr: T[]): T[] {
   const copy = [...arr];
@@ -178,6 +210,41 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   const [volume, setVolume] = useState<number>(1);
   const [usedFormat, setUsedFormat] = useState<'m3u8' | 'ts'>('m3u8');
 
+  // Controle de Progresso do Vídeo (Scrubber)
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+
+  // Modalidade Exclusiva para Séries (Próximo Episódio / Auto-Play / Gaveta)
+  const [seriesContext, setSeriesContext] = useState<SeriesPlaybackContext | null>(null);
+  const [autoPlayNextEpisode, setAutoPlayNextEpisode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('iptv_series_autoplay') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState<boolean>(false);
+  const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState<number>(15);
+  const [dismissedPromptEpisodeId, setDismissedPromptEpisodeId] = useState<string | null>(null);
+  const [showSeriesEpisodeDrawer, setShowSeriesEpisodeDrawer] = useState<boolean>(false);
+
+  // Refs para manter eventos do vídeo sincronizados com o estado mais recente
+  const seriesContextRef = useRef<SeriesPlaybackContext | null>(null);
+  const dismissedPromptEpisodeIdRef = useRef<string | null>(null);
+  const autoPlayNextEpisodeRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    seriesContextRef.current = seriesContext;
+  }, [seriesContext]);
+
+  useEffect(() => {
+    dismissedPromptEpisodeIdRef.current = dismissedPromptEpisodeId;
+  }, [dismissedPromptEpisodeId]);
+
+  useEffect(() => {
+    autoPlayNextEpisodeRef.current = autoPlayNextEpisode;
+  }, [autoPlayNextEpisode]);
+
   const [recentlyWatched, setRecentlyWatched] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem(`iptv_recent_${currentUser?.id || 'guest'}`);
@@ -236,10 +303,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: currentUser.playlistUrl, type: targetType }),
     })
-      .then((res) => res.json())
-      .then((data) => {
+      .then(parseResponseSafely)
+      .then(({ ok, data, error }) => {
         if (!isMounted) return;
-        if (data.success && Array.isArray(data.categories)) {
+        if (ok && data?.success && Array.isArray(data.categories)) {
           setXtreamCategories((prev) => ({ ...prev, [targetType]: data.categories }));
           if (targetType === 'vod' && data.categories.length > 0 && !selectedVodCat) {
             setSelectedVodCat(data.categories[0]);
@@ -248,9 +315,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
             setSelectedSeriesCat(data.categories[0]);
             loadStreamsForCategory('series', data.categories[0].id);
           }
+        } else {
+          console.warn('Categorias Xtream indisponíveis:', error);
         }
       })
-      .catch((err) => console.error('Erro ao buscar categorias Xtream:', err))
+      .catch((err) => {
+        console.warn('Categorias Xtream indisponíveis ou erro de rede:', err?.message || err);
+      })
       .finally(() => {
         if (isMounted) setLoadingCats(false);
       });
@@ -276,12 +347,14 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
           limit: 5000,
         }),
       });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.items)) {
+      const { ok, data, error } = await parseResponseSafely(res);
+      if (ok && data?.success && Array.isArray(data.items)) {
         setXtreamStreamsCache((prev) => ({ ...prev, [cacheKey]: data.items }));
+      } else {
+        console.warn('Streams da categoria indisponíveis:', error);
       }
-    } catch (err) {
-      console.error('Erro ao carregar streams da categoria:', err);
+    } catch (err: any) {
+      console.warn('Streams da categoria indisponíveis:', err?.message || err);
     } finally {
       setLoadingStreams(false);
     }
@@ -304,6 +377,37 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   };
 
   const handleOpenSeriesModal = async (seriesItem: any) => {
+    // Suporte para séries com episódios pré-carregados (ex: catálogo VOD local ou M3U parseado)
+    if (seriesItem.episodes && seriesItem.episodes.length > 0) {
+      const episodesBySeason: Record<string, any[]> = {};
+      const seasonsList: any[] = [];
+      const seasonNums = new Set<number>();
+
+      (seriesItem.episodes || []).forEach((ep: any) => {
+        const sNum = ep.seasonNumber || 1;
+        const sKey = String(sNum);
+        if (!episodesBySeason[sKey]) episodesBySeason[sKey] = [];
+        episodesBySeason[sKey].push(ep);
+        seasonNums.add(sNum);
+      });
+
+      Array.from(seasonNums).sort((a, b) => a - b).forEach((s) => {
+        seasonsList.push({ season_number: s, name: `Temporada ${s}` });
+      });
+
+      const firstSeason = seasonsList[0]?.season_number || 1;
+      setSeriesModal({
+        isOpen: true,
+        series: seriesItem,
+        info: { name: seriesItem.title, plot: seriesItem.synopsis, genre: seriesItem.genre, cover: seriesItem.posterUrl },
+        seasons: seasonsList.length > 0 ? seasonsList : [{ season_number: 1, name: 'Temporada 1' }],
+        episodes: episodesBySeason,
+        selectedSeason: firstSeason,
+        loading: false,
+      });
+      return;
+    }
+
     const sId = seriesItem.seriesId || String(seriesItem.id).replace('series_', '');
     setSeriesModal({ isOpen: true, series: seriesItem, seasons: [], episodes: {}, selectedSeason: 1, loading: true });
 
@@ -313,22 +417,30 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: currentUser?.playlistUrl, seriesId: sId }),
       });
-      const data = await res.json();
-      if (data.success && data.data) {
+      const { ok, data, error } = await parseResponseSafely(res);
+      if (ok && data?.success && data.data) {
         const seasons = data.data.seasons || [];
         const episodes = data.data.episodes || {};
         const firstSeason = seasons[0]?.season_number ? Number(seasons[0].season_number) : 1;
         setSeriesModal({ isOpen: true, series: seriesItem, info: data.data.info, seasons, episodes, selectedSeason: firstSeason, loading: false });
       } else {
+        console.warn('Episódios não encontrados para a série:', error || data?.error);
         setSeriesModal((prev) => ({ ...prev, loading: false }));
       }
-    } catch (err) {
-      console.error('Erro ao buscar episódios da série:', err);
+    } catch (err: any) {
+      console.warn('Episódios da série indisponíveis ou erro de rede:', err?.message || err);
       setSeriesModal((prev) => ({ ...prev, loading: false }));
     }
   };
 
-  const handlePlayEpisode = (ep: any) => {
+  const handlePlayEpisode = (
+    ep: any,
+    customSeasonNum?: number,
+    customEpisodesList?: any[],
+    customSeries?: any,
+    customAllSeasons?: any[],
+    customAllEpisodes?: Record<string, any[]>
+  ) => {
     const ext = ep.container_extension || 'mp4';
     let baseUrl = '', username = '', password = '';
     try {
@@ -338,30 +450,174 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
       password = parsedUrl.searchParams.get('password') || '';
     } catch {}
 
-    const streamUrl = `${baseUrl}/series/${username}/${password}/${ep.id}.${ext}`;
+    const streamUrl = ep.streamUrl ? ep.streamUrl : `${baseUrl}/series/${username}/${password}/${ep.id}.${ext}`;
+    const activeSeries = customSeries || seriesModal.series;
+    const activeSeasons = customAllSeasons || seriesModal.seasons;
+    const activeEpisodesMap = customAllEpisodes || seriesModal.episodes;
+    const seasonNum = customSeasonNum !== undefined ? customSeasonNum : seriesModal.selectedSeason;
+    const currentSeasonKey = String(seasonNum);
+    const episodesInSeason: any[] = customEpisodesList || (activeEpisodesMap[currentSeasonKey] || []);
+
+    const currentIndex = episodesInSeason.findIndex((e: any) => String(e.id) === String(ep.id));
+    let nextEpisode: any | null = null;
+    let prevEpisode: any | null = null;
+
+    if (currentIndex !== -1) {
+      if (currentIndex < episodesInSeason.length - 1) {
+        nextEpisode = episodesInSeason[currentIndex + 1];
+      } else {
+        // Verifica se há episódios na próxima temporada
+        const nextSeasonKey = String(seasonNum + 1);
+        if (activeEpisodesMap[nextSeasonKey] && activeEpisodesMap[nextSeasonKey].length > 0) {
+          nextEpisode = { ...activeEpisodesMap[nextSeasonKey][0], seasonNumber: seasonNum + 1 };
+        }
+      }
+      if (currentIndex > 0) {
+        prevEpisode = episodesInSeason[currentIndex - 1];
+      }
+    }
+
+    const epTitle = ep.title || (ep.episode_num ? `Episódio ${ep.episode_num}` : 'Episódio');
+    const seriesTitle = activeSeries?.title || 'Série';
+
+    setSeriesContext({
+      seriesTitle,
+      posterUrl: ep.info?.movie_image || activeSeries?.posterUrl,
+      seasonNumber: seasonNum,
+      episodeIndex: currentIndex !== -1 ? currentIndex : 0,
+      currentEpisode: ep,
+      episodesList: episodesInSeason,
+      nextEpisode,
+      prevEpisode,
+      allSeasons: activeSeasons,
+      allEpisodes: activeEpisodesMap,
+      seriesItem: activeSeries,
+    });
+
+    // Reseta alertas de próximo episódio
+    setShowNextEpisodePrompt(false);
+    setNextEpisodeCountdown(15);
+    setDismissedPromptEpisodeId(null);
+    setCurrentTime(0);
+    setDuration(0);
 
     setNowPlaying({
-      title: `${seriesModal.series?.title || 'Série'} - ${ep.title || `Episódio ${ep.episode_num}`}`,
+      title: `${seriesTitle} • T${seasonNum}: ${epTitle}`,
       streamUrl,
-      category: seriesModal.series?.genre || 'Série',
-      logoUrl: ep.info?.movie_image || seriesModal.series?.posterUrl,
+      category: activeSeries?.genre || 'Série',
+      logoUrl: ep.info?.movie_image || activeSeries?.posterUrl,
       type: 'vod',
       item: {
         id: `ep_${ep.id}`,
-        title: ep.title || `Episódio ${ep.episode_num}`,
+        title: epTitle,
         type: 'series',
-        posterUrl: ep.info?.movie_image || seriesModal.series?.posterUrl || '',
+        posterUrl: ep.info?.movie_image || activeSeries?.posterUrl || '',
         streamUrl,
-        rating: 4.8, year: 2024,
-        genre: seriesModal.series?.genre || 'Séries',
+        rating: activeSeries?.rating || 4.8,
+        year: activeSeries?.year || 2024,
+        genre: activeSeries?.genre || 'Séries',
         category: 'Séries',
-        synopsis: ep.info?.plot || '',
+        synopsis: ep.info?.plot || activeSeries?.synopsis || '',
       },
     });
 
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { window.scrollTo(0, 0); }
     setSeriesModal((prev) => ({ ...prev, isOpen: false }));
+    setShowSeriesEpisodeDrawer(false);
   };
+
+  const handlePlayNextEpisode = () => {
+    const ctx = seriesContextRef.current;
+    if (!ctx || !ctx.nextEpisode) return;
+    const nextEp = ctx.nextEpisode;
+    const isNextSeason = nextEp.seasonNumber && nextEp.seasonNumber !== ctx.seasonNumber;
+    const targetSeason = isNextSeason ? nextEp.seasonNumber : ctx.seasonNumber;
+    const targetSeasonKey = String(targetSeason);
+    const targetList = (ctx.allEpisodes && ctx.allEpisodes[targetSeasonKey])
+      ? ctx.allEpisodes[targetSeasonKey]
+      : ctx.episodesList;
+
+    handlePlayEpisode(
+      nextEp,
+      targetSeason,
+      targetList,
+      ctx.seriesItem,
+      ctx.allSeasons,
+      ctx.allEpisodes
+    );
+  };
+
+  const handlePlayPrevEpisode = () => {
+    const ctx = seriesContextRef.current;
+    if (!ctx || !ctx.prevEpisode) return;
+    handlePlayEpisode(
+      ctx.prevEpisode,
+      ctx.seasonNumber,
+      ctx.episodesList,
+      ctx.seriesItem,
+      ctx.allSeasons,
+      ctx.allEpisodes
+    );
+  };
+
+  const handleToggleAutoPlay = () => {
+    setAutoPlayNextEpisode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('iptv_series_autoplay', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!videoRef.current || duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetTime = pos * duration;
+    videoRef.current.currentTime = targetTime;
+    setCurrentTime(targetTime);
+  };
+
+  const handleSkipSeconds = (delta: number) => {
+    if (!videoRef.current) return;
+    const cur = videoRef.current.currentTime || 0;
+    const maxDur = duration || 999999;
+    const targetTime = Math.max(0, Math.min(maxDur, cur + delta));
+    videoRef.current.currentTime = targetTime;
+    setCurrentTime(targetTime);
+  };
+
+  const formatVideoTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds < 0) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) {
+      return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  // Contagem regressiva para ir automaticamente para o próximo episódio
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (showNextEpisodePrompt && seriesContext?.nextEpisode && autoPlayNextEpisode) {
+      timer = setInterval(() => {
+        setNextEpisodeCountdown((prev) => {
+          if (prev <= 1) {
+            if (timer) clearInterval(timer);
+            handlePlayNextEpisode();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [showNextEpisodePrompt, autoPlayNextEpisode, seriesContext?.nextEpisode]);
 
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
 
@@ -548,8 +804,43 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
 
     const onLoaded = () => {
       setIsBuffering(false);
+      setDuration(video.duration || 0);
       video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
     };
+
+    const onTimeUpdate = () => {
+      const cur = video.currentTime || 0;
+      const dur = video.duration || 0;
+      setCurrentTime(cur);
+      setDuration(dur);
+
+      const ctx = seriesContextRef.current;
+      // Modalidade exclusiva para Séries: checa se está próximo ao fim do episódio
+      if (ctx && ctx.nextEpisode && dur > 20) {
+        const timeLeft = dur - cur;
+        const currentEpId = String(ctx.currentEpisode?.id || '');
+        if (timeLeft <= 25 && timeLeft > 0) {
+          if (dismissedPromptEpisodeIdRef.current !== currentEpId) {
+            setShowNextEpisodePrompt(true);
+          }
+        } else if (timeLeft > 30) {
+          setShowNextEpisodePrompt(false);
+        }
+      }
+    };
+
+    const onEnded = () => {
+      setIsPlaying(false);
+      const ctx = seriesContextRef.current;
+      if (ctx && ctx.nextEpisode) {
+        if (autoPlayNextEpisodeRef.current) {
+          handlePlayNextEpisode();
+        } else {
+          setShowNextEpisodePrompt(true);
+        }
+      }
+    };
+
     const onErr = () => {
       setIsBuffering(false);
       setPlayerError('Tentando reconectar...');
@@ -580,6 +871,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
     const onPlaying = () => setIsBuffering(false);
 
     video.addEventListener('loadedmetadata', onLoaded);
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('ended', onEnded);
     video.addEventListener('error', onErr);
     video.addEventListener('waiting', onWaiting);
     video.addEventListener('playing', onPlaying);
@@ -596,6 +889,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
 
     return () => {
       video.removeEventListener('loadedmetadata', onLoaded);
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('ended', onEnded);
       video.removeEventListener('error', onErr);
       video.removeEventListener('waiting', onWaiting);
       video.removeEventListener('playing', onPlaying);
@@ -604,6 +899,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   }, [nowPlaying]);
 
   const handlePlayChannel = (channel: Channel) => {
+    setSeriesContext(null);
+    setShowNextEpisodePrompt(false);
+    setShowSeriesEpisodeDrawer(false);
+
     if (nowPlaying?.item && (nowPlaying.item as any).id !== channel.id && nowPlaying.type === 'live') {
       setLastChannel(nowPlaying.item as Channel);
     }
@@ -623,6 +922,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
   };
 
   const handlePlayVod = (item: VodItem) => {
+    if (item.type === 'series' && item.episodes && item.episodes.length > 0) {
+      handleOpenSeriesModal(item);
+      return;
+    }
+
+    setSeriesContext(null);
+    setShowNextEpisodePrompt(false);
+    setShowSeriesEpisodeDrawer(false);
+
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { window.scrollTo(0, 0); }
     setNowPlaying({
       title: item.title, streamUrl: item.streamUrl,
@@ -833,7 +1141,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
               <div
                 key={`${isSeries ? 's' : 'm'}-hero-${item.id}-${idx}`}
                 onClick={() => {
-                  if (isCurrent) { if (isSeries && isXtream) handleOpenSeriesModal(item); else handlePlayVod(item); }
+                  if (isCurrent) {
+                    if (isSeries && (isXtream || (item.episodes && item.episodes.length > 0))) handleOpenSeriesModal(item);
+                    else handlePlayVod(item);
+                  }
                   else setActiveSlide(idx);
                 }}
                 className={`absolute transition-all duration-500 ease-out cursor-pointer rounded-2xl overflow-hidden shadow-2xl border ${
@@ -877,7 +1188,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (isSeries && isXtream) handleOpenSeriesModal(item);
+                            if (isSeries && (isXtream || (item.episodes && item.episodes.length > 0))) handleOpenSeriesModal(item);
                             else handlePlayVod(item);
                           }}
                           className="px-4 py-1.5 rounded-full text-white font-bold text-xs flex items-center gap-1.5 shadow-lg transition active:scale-95"
@@ -1082,22 +1393,246 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                 {controlsVisible && (
                   <motion.div
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    className="absolute top-0 left-0 right-0 z-20 p-2 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between text-white"
+                    className="absolute top-0 left-0 right-0 z-30 p-2 bg-gradient-to-b from-black/85 via-black/40 to-transparent flex items-center justify-between text-white"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: nowPlaying.type === 'live' ? accent : '#3b82f6' }} />
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: nowPlaying.type === 'live' ? accent : (seriesContext ? '#10b981' : '#3b82f6') }} />
                       <span className="text-xs font-bold truncate">{nowPlaying.title}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded uppercase shrink-0 border" style={nowPlaying.type === 'live' ? { background: hexWithAlpha(accent, 0.3), color: '#fff', borderColor: hexWithAlpha(accent, 0.6) } : { background: 'rgba(59,130,246,0.3)', color: '#93c5fd', borderColor: 'rgba(59,130,246,0.5)' }}>
-                        {nowPlaying.type === 'live' ? 'AO VIVO' : 'VOD'}
-                      </span>
+                      
+                      {seriesContext ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded uppercase shrink-0 font-bold border bg-emerald-500/20 text-emerald-300 border-emerald-500/40 flex items-center gap-1">
+                          <span>SÉRIE</span>
+                          <span className="text-white/60">•</span>
+                          <span>T{seriesContext.seasonNumber}:E{seriesContext.episodeIndex + 1}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded uppercase shrink-0 border" style={nowPlaying.type === 'live' ? { background: hexWithAlpha(accent, 0.3), color: '#fff', borderColor: hexWithAlpha(accent, 0.6) } : { background: 'rgba(59,130,246,0.3)', color: '#93c5fd', borderColor: 'rgba(59,130,246,0.5)' }}>
+                          {nowPlaying.type === 'live' ? 'AO VIVO' : 'VOD'}
+                        </span>
+                      )}
                     </div>
+                    
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <button onClick={toggleFullscreen} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-slate-300 hover:text-white transition cursor-pointer">
+                      {seriesContext && (
+                        <button
+                          onClick={() => setShowSeriesEpisodeDrawer(!showSeriesEpisodeDrawer)}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
+                            showSeriesEpisodeDrawer ? 'bg-emerald-600 text-white' : 'bg-black/60 hover:bg-black/80 text-slate-200'
+                          }`}
+                          title="Lista de Episódios"
+                        >
+                          <List className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Episódios</span>
+                        </button>
+                      )}
+                      <button onClick={toggleFullscreen} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-slate-300 hover:text-white transition cursor-pointer" title="Tela cheia">
                         {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                       </button>
-                      <button onClick={() => setNowPlaying(null)} className="p-1.5 rounded-lg text-white transition cursor-pointer" style={{ background: hexWithAlpha(accent, 0.8) }}>
+                      <button
+                        onClick={() => {
+                          setNowPlaying(null);
+                          setSeriesContext(null);
+                          setShowNextEpisodePrompt(false);
+                          setShowSeriesEpisodeDrawer(false);
+                        }}
+                        className="p-1.5 rounded-lg text-white transition cursor-pointer hover:opacity-90"
+                        style={{ background: hexWithAlpha(accent, 0.8) }}
+                        title="Fechar Player"
+                      >
                         <X className="w-4 h-4" />
                       </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* GAVETA DE EPISÓDIOS DENTRO DO PLAYER (MODALIDADE SÉRIES) */}
+              <AnimatePresence>
+                {showSeriesEpisodeDrawer && seriesContext && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 50 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 50 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute inset-y-0 right-0 z-40 w-full sm:w-80 bg-black/90 backdrop-blur-md border-l border-slate-800 flex flex-col p-3 shadow-2xl overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800 shrink-0">
+                      <div>
+                        <div className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">Episódios da Série</div>
+                        <h4 className="text-xs font-bold text-white truncate max-w-[200px]">{seriesContext.seriesTitle}</h4>
+                      </div>
+                      <button
+                        onClick={() => setShowSeriesEpisodeDrawer(false)}
+                        className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {seriesContext.allSeasons && seriesContext.allSeasons.length > 1 && (
+                      <div className="py-2 flex items-center gap-1 overflow-x-auto shrink-0 scrollbar-none">
+                        {seriesContext.allSeasons.map((s) => {
+                          const sNum = Number(s.season_number || 1);
+                          const isSel = sNum === seriesContext.seasonNumber;
+                          return (
+                            <button
+                              key={sNum}
+                              onClick={() => {
+                                const sKey = String(sNum);
+                                const epList = seriesContext.allEpisodes ? (seriesContext.allEpisodes[sKey] || []) : [];
+                                if (epList.length > 0) {
+                                  handlePlayEpisode(epList[0], sNum, epList, seriesContext.seriesItem, seriesContext.allSeasons, seriesContext.allEpisodes);
+                                }
+                              }}
+                              className={`px-2 py-1 rounded text-[10px] font-bold shrink-0 transition ${
+                                isSel ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              T{sNum}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex-1 overflow-y-auto space-y-1.5 pt-2 pr-0.5 scrollbar-thin">
+                      {seriesContext.episodesList.map((ep: any, idx: number) => {
+                        const isCurrent = String(ep.id) === String(seriesContext.currentEpisode?.id);
+                        const epTitle = ep.title || (ep.episode_num ? `Episódio ${ep.episode_num}` : `Episódio ${idx + 1}`);
+                        const epThumb = ep.info?.movie_image || ep.info?.cover || seriesContext.posterUrl;
+
+                        return (
+                          <div
+                            key={ep.id}
+                            onClick={() => handlePlayEpisode(ep, seriesContext.seasonNumber, seriesContext.episodesList, seriesContext.seriesItem, seriesContext.allSeasons, seriesContext.allEpisodes)}
+                            className={`p-1.5 rounded-lg flex items-center gap-2 cursor-pointer transition text-left border ${
+                              isCurrent
+                                ? 'bg-emerald-950/60 border-emerald-500/50 shadow-sm'
+                                : 'bg-slate-900/50 border-slate-800/80 hover:bg-slate-800'
+                            }`}
+                          >
+                            <div className="relative w-12 h-8 rounded bg-black shrink-0 overflow-hidden">
+                              {epThumb ? (
+                                <img src={epThumb} alt={epTitle} className="w-full h-full object-cover" loading="lazy" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-[10px] font-mono text-slate-500">EP</div>
+                              )}
+                              {isCurrent && (
+                                <div className="absolute inset-0 bg-emerald-600/40 flex items-center justify-center">
+                                  <Play className="w-3 h-3 text-white fill-current animate-pulse" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-[11px] font-semibold truncate ${isCurrent ? 'text-emerald-300' : 'text-slate-200'}`}>
+                                {idx + 1}. {epTitle}
+                              </p>
+                              <span className="text-[9px] text-slate-400">
+                                {isCurrent ? 'Assistindo agora' : (ep.info?.duration_secs ? `${Math.round(ep.info.duration_secs / 60)} min` : 'Reproduzir')}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* CARD ELEGANTE: PRÓXIMO EPISÓDIO ("IR SOZINHO" OU "IR AGORA") */}
+              <AnimatePresence>
+                {showNextEpisodePrompt && seriesContext?.nextEpisode && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 30, scale: 0.95 }}
+                    transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+                    className="absolute bottom-16 sm:bottom-20 right-2 sm:right-4 z-40 max-w-[340px] w-[94%] sm:w-auto bg-slate-950/95 border border-emerald-500/50 rounded-2xl p-3 shadow-2xl backdrop-blur-md flex flex-col gap-2.5"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div className="relative w-16 h-12 rounded-lg bg-black overflow-hidden shrink-0 border border-slate-700">
+                        <img
+                          src={seriesContext.nextEpisode.info?.movie_image || seriesContext.posterUrl}
+                          alt="Próximo"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                          <Play className="w-4 h-4 text-emerald-400 fill-current" />
+                        </div>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+                            {autoPlayNextEpisode ? `Próximo em ${nextEpisodeCountdown}s` : 'Próximo Episódio'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              setShowNextEpisodePrompt(false);
+                              if (seriesContext.currentEpisode) {
+                                setDismissedPromptEpisodeId(String(seriesContext.currentEpisode.id));
+                              }
+                            }}
+                            className="text-slate-400 hover:text-white p-0.5 rounded transition"
+                            title="Fechar aviso"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <h4 className="text-xs font-bold text-white truncate">
+                          {seriesContext.nextEpisode.title || (seriesContext.nextEpisode.episode_num ? `Episódio ${seriesContext.nextEpisode.episode_num}` : 'Próximo Episódio')}
+                        </h4>
+                        <p className="text-[10px] text-slate-300">
+                          T{seriesContext.nextEpisode.seasonNumber || seriesContext.seasonNumber} • Série
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Barra de progresso visual para o próximo episódio se Ir Sozinho estiver ativo */}
+                    {autoPlayNextEpisode && (
+                      <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 transition-all duration-1000 ease-linear rounded-full"
+                          style={{ width: `${Math.max(0, Math.min(100, (1 - nextEpisodeCountdown / 15) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                      {/* Botão de Toggle: Ir Sozinho */}
+                      <button
+                        onClick={handleToggleAutoPlay}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1 transition ${
+                          autoPlayNextEpisode
+                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900/60'
+                            : 'bg-slate-900 text-slate-400 border border-slate-700 hover:bg-slate-800 text-white'
+                        }`}
+                        title={autoPlayNextEpisode ? 'Ir sozinho ativado: começará automaticamente' : 'Ir sozinho desativado: clique para assistir'}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${autoPlayNextEpisode ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                        <span>Ir Sozinho: {autoPlayNextEpisode ? 'ON' : 'OFF'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            setShowNextEpisodePrompt(false);
+                            if (seriesContext.currentEpisode) {
+                              setDismissedPromptEpisodeId(String(seriesContext.currentEpisode.id));
+                            }
+                          }}
+                          className="px-2 py-1 rounded-lg text-[10px] font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+                        >
+                          Ficar Aqui
+                        </button>
+                        <button
+                          onClick={handlePlayNextEpisode}
+                          className="px-3 py-1 rounded-lg text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 flex items-center gap-1 shadow-md transition active:scale-95 cursor-pointer"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>Ir Agora</span>
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 )}
@@ -1131,17 +1666,18 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                 </div>
               )}
 
+              {/* CONTROLES INFERIORES DO PLAYER */}
               <AnimatePresence>
                 {controlsVisible && (
                   <motion.div
                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
                     transition={{ duration: 0.2 }}
-                    className="absolute bottom-0 left-0 right-0 z-20 px-2 pt-6 pb-2 bg-gradient-to-t from-black/95 via-black/60 to-transparent"
+                    className="absolute bottom-0 left-0 right-0 z-20 px-2.5 pt-6 pb-2.5 bg-gradient-to-t from-black/95 via-black/70 to-transparent flex flex-col gap-1.5"
                   >
                     <AnimatePresence>
                       {showBrightness && (
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
-                          className="absolute bottom-14 left-2 bg-slate-950/95 backdrop-blur-md border border-slate-700 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl">
+                          className="absolute bottom-16 left-2 bg-slate-950/95 backdrop-blur-md border border-slate-700 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl z-30">
                           <Sun className="w-3.5 h-3.5 text-yellow-400" />
                           <input type="range" min="0.3" max="1.5" step="0.05" value={brightness} onChange={(e) => setBrightness(parseFloat(e.target.value))} className="w-24 h-1 accent-yellow-400" />
                           <span className="text-[10px] text-yellow-300 font-mono w-9 text-right">{Math.round(brightness * 100)}%</span>
@@ -1152,7 +1688,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                     <AnimatePresence>
                       {showQualityMenu && hlsLevels.length > 0 && (
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
-                          className="absolute bottom-14 right-2 bg-slate-950/95 backdrop-blur-md border border-slate-700 rounded-xl py-1 shadow-xl min-w-[120px]">
+                          className="absolute bottom-16 right-2 bg-slate-950/95 backdrop-blur-md border border-slate-700 rounded-xl py-1 shadow-xl min-w-[120px] z-30">
                           <div className="px-2.5 py-0.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wide border-b border-slate-800">Qualidade</div>
                           <button onClick={() => changeQuality(-1)} className={`w-full text-left px-2.5 py-1 text-xs hover:bg-slate-800 transition flex items-center justify-between ${currentLevel === -1 ? 'font-bold' : 'text-slate-200'}`} style={currentLevel === -1 ? { color: accent } : {}}>
                             <span>Auto</span>
@@ -1168,22 +1704,133 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                       )}
                     </AnimatePresence>
 
+                    {/* BARRA DE PROGRESSO (SCRUBBER) PARA VOD E SÉRIES */}
+                    {nowPlaying.type === 'vod' && duration > 0 && (
+                      <div className="w-full flex items-center gap-2 px-1">
+                        <span className="text-[10px] font-mono text-slate-300 shrink-0 w-10 text-right">
+                          {formatVideoTime(currentTime)}
+                        </span>
+                        
+                        <div
+                          onClick={handleSeek}
+                          className="relative flex-1 h-1.5 hover:h-2.5 bg-white/20 rounded-full cursor-pointer transition-all duration-150 group/bar flex items-center"
+                        >
+                          <div
+                            className="h-full rounded-full transition-all duration-75"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, (currentTime / duration) * 100))}%`,
+                              background: seriesContext ? '#10b981' : accent,
+                            }}
+                          />
+                          <div
+                            className="absolute w-3 h-3 rounded-full bg-white shadow-md -translate-x-1/2 scale-0 group-hover/bar:scale-100 transition-transform duration-100"
+                            style={{
+                              left: `${Math.min(100, Math.max(0, (currentTime / duration) * 100))}%`,
+                            }}
+                          />
+                        </div>
+
+                        <span className="text-[10px] font-mono text-slate-400 shrink-0 w-10 text-left">
+                          {formatVideoTime(duration)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* BOTÕES PRINCIPAIS DE CONTROLE */}
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        {/* Play/Pause */}
                         <button
-                          onClick={() => { if (videoRef.current) { if (isPlaying) { videoRef.current.pause(); setIsPlaying(false); } else { videoRef.current.play(); setIsPlaying(true); } } }}
-                          className="w-8 h-8 rounded-full text-white flex items-center justify-center transition active:scale-95 shadow-md"
-                          style={{ background: accent }}
+                          onClick={() => {
+                            if (videoRef.current) {
+                              if (isPlaying) { videoRef.current.pause(); setIsPlaying(false); }
+                              else { videoRef.current.play(); setIsPlaying(true); }
+                            }
+                          }}
+                          className="w-8 h-8 rounded-full text-white flex items-center justify-center transition active:scale-95 shadow-md shrink-0"
+                          style={{ background: seriesContext ? '#10b981' : accent }}
+                          title={isPlaying ? 'Pausar' : 'Reproduzir'}
                         >
                           {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
                         </button>
 
-                        <button onClick={() => { if (videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }} className="p-1.5 text-slate-300 hover:text-white transition">
+                        {/* Mudo / Volume */}
+                        <button
+                          onClick={() => { if (videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}
+                          className="p-1.5 text-slate-300 hover:text-white transition"
+                          title={isMuted ? 'Ativar som' : 'Silenciar'}
+                        >
                           {isMuted ? <VolumeX className="w-4 h-4" style={{ color: accent }} /> : <Volume2 className="w-4 h-4" />}
                         </button>
 
                         {!isMuted && (
-                          <input type="range" min="0" max="1" step="0.05" value={volume} onChange={(e) => setVolume(parseFloat(e.target.value))} className="hidden sm:block w-16 h-1" />
+                          <input type="range" min="0" max="1" step="0.05" value={volume} onChange={(e) => setVolume(parseFloat(e.target.value))} className="hidden sm:block w-14 h-1 accent-white" />
+                        )}
+
+                        {/* Botões de Pular 10s (VOD / Séries) */}
+                        {nowPlaying.type === 'vod' && (
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              onClick={() => handleSkipSeconds(-10)}
+                              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition"
+                              title="Voltar 10 segundos"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleSkipSeconds(10)}
+                              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition"
+                              title="Avançar 10 segundos"
+                            >
+                              <RotateCw className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* MODALIDADE SÉRIES: EPISÓDIO ANTERIOR E PRÓXIMO EPISÓDIO */}
+                        {seriesContext && (
+                          <div className="flex items-center gap-1 pl-1 border-l border-slate-700/80">
+                            <button
+                              onClick={handlePlayPrevEpisode}
+                              disabled={!seriesContext.prevEpisode}
+                              className={`p-1.5 rounded-lg transition ${
+                                seriesContext.prevEpisode
+                                  ? 'bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer'
+                                  : 'bg-white/5 text-slate-600 cursor-not-allowed'
+                              }`}
+                              title={seriesContext.prevEpisode ? 'Episódio Anterior' : 'Não há episódio anterior'}
+                            >
+                              <SkipBack className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={handlePlayNextEpisode}
+                              disabled={!seriesContext.nextEpisode}
+                              className={`p-1.5 rounded-lg transition flex items-center gap-1 ${
+                                seriesContext.nextEpisode
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md cursor-pointer'
+                                  : 'bg-white/5 text-slate-600 cursor-not-allowed'
+                              }`}
+                              title={seriesContext.nextEpisode ? 'Próximo Episódio' : 'Último episódio da temporada'}
+                            >
+                              <SkipForward className="w-3.5 h-3.5" />
+                              <span className="hidden md:inline text-[10px] font-bold">Próximo</span>
+                            </button>
+
+                            {/* Indicador e Alternador de Auto-Play ("Ir Sozinho") */}
+                            <button
+                              onClick={handleToggleAutoPlay}
+                              className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition ${
+                                autoPlayNextEpisode
+                                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900/60'
+                                  : 'bg-slate-900 text-slate-400 border border-slate-700 hover:text-white'
+                              }`}
+                              title={autoPlayNextEpisode ? 'Ir Sozinho está Ativado: ao final do episódio o próximo iniciará automaticamente' : 'Ir Sozinho está Desativado: o próximo episódio só iniciará quando você clicar'}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${autoPlayNextEpisode ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                              <span>Auto: {autoPlayNextEpisode ? 'ON' : 'OFF'}</span>
+                            </button>
+                          </div>
                         )}
 
                         {nowPlaying.type === 'live' && lastChannel && (
@@ -1193,23 +1840,23 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => setShowBrightness(!showBrightness)} className={`p-1.5 rounded-lg transition ${showBrightness ? 'bg-yellow-500/30 text-yellow-300' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => setShowBrightness(!showBrightness)} className={`p-1.5 rounded-lg transition ${showBrightness ? 'bg-yellow-500/30 text-yellow-300' : 'bg-white/10 hover:bg-white/20 text-white'}`} title="Brilho">
                           <Sun className="w-3.5 h-3.5" />
                         </button>
 
                         {hlsLevels.length > 0 && (
-                          <button onClick={() => setShowQualityMenu(!showQualityMenu)} className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono transition ${showQualityMenu ? 'text-white' : 'bg-white/10 hover:bg-white/20'}`} style={showQualityMenu ? { background: hexWithAlpha(accent, 0.4), color: '#fff' } : { color: accent }}>
+                          <button onClick={() => setShowQualityMenu(!showQualityMenu)} className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono transition ${showQualityMenu ? 'text-white' : 'bg-white/10 hover:bg-white/20'}`} style={showQualityMenu ? { background: hexWithAlpha(accent, 0.4), color: '#fff' } : { color: accent }} title="Qualidade">
                             <Gauge className="w-3 h-3" />
                             <span className="hidden sm:inline">{currentLevel === -1 ? 'Auto' : hlsLevels.find((l) => l.index === currentLevel)?.name || 'Auto'}</span>
                           </button>
                         )}
 
-                        <button onClick={togglePiP} className={`p-1.5 rounded-lg transition hidden sm:block ${isPipActive ? 'text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`} style={isPipActive ? { background: hexWithAlpha(accent, 0.4) } : {}}>
+                        <button onClick={togglePiP} className={`p-1.5 rounded-lg transition hidden sm:block ${isPipActive ? 'text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`} style={isPipActive ? { background: hexWithAlpha(accent, 0.4) } : {}} title="Picture in Picture">
                           <PictureInPicture2 className="w-3.5 h-3.5" />
                         </button>
 
-                        <div className="hidden sm:block text-[11px] text-slate-300 font-medium px-2">{nowPlaying.category}</div>
+                        <div className="hidden sm:block text-[11px] text-slate-300 font-medium px-2 truncate max-w-[130px]">{nowPlaying.category}</div>
                       </div>
                     </div>
                   </motion.div>
@@ -1373,7 +2020,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({
                 {visibleSeries.map((series) => (
                   <div
                     key={series.id}
-                    onClick={() => (isXtream ? handleOpenSeriesModal(series) : handlePlayVod(series))}
+                    onClick={() => ((isXtream || (series.episodes && series.episodes.length > 0)) ? handleOpenSeriesModal(series) : handlePlayVod(series))}
                     className="group relative bg-[#131722] rounded-xl overflow-hidden border border-slate-800 transition-all duration-300 shadow-md flex flex-col cursor-pointer active:scale-98"
                   >
                     <div className="relative aspect-[2/3] w-full bg-slate-900 overflow-hidden">
